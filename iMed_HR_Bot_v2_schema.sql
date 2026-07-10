@@ -311,10 +311,32 @@ where x.arxiv = false
 group by x.telegram_id, x.ism, x.rol, x.bolim, to_char(d.sana,'YYYY-MM');
 
 -- ============================================================
---  RLS eslatma:
+--  13. XAVFSIZLIK — RLS (deny-all)
 --   Bot backend service_role kaliti bilan ulanadi (RLS'ni chetlab o'tadi).
---   Shu sabab RLS yoqilmagan. Agar public anon kalit ishlatilsa —
---   har jadvalga RLS + policy qo'shish shart.
+--   RLS yoqilgan, lekin policy YO'Q → anon/public kalit har qanday
+--   kirishдан bloklanadi, bot esa (service_role) to'liq ishlaydi.
+--   Kelajakda public anon kalit kerak bo'lsa — mos policy qo'shiladi.
 -- ============================================================
+alter table public.xodimlar      enable row level security;
+alter table public.davomat       enable row level security;
+alter table public.sinov         enable row level security;
+alter table public.fix_kpi       enable row level security;
+alter table public.qolda_baholar enable row level security;
+alter table public.bonus         enable row level security;
+alter table public.tatil         enable row level security;
+alter table public.amocrm_calls  enable row level security;
+alter table public.amocrm_tasks  enable row level security;
+alter table public.config        enable row level security;
+alter table public.bot_sessiya   enable row level security;
 
--- Tayyor. Keyingi qadam: grammY skelet (rol + menyu + sessiya).
+-- View'lar querying user huquqi bilan (SECURITY DEFINER emas)
+alter view public.v_davomat_kun set (security_invoker = on);
+alter view public.v_oylik_soat  set (security_invoker = on);
+
+-- Funksiyalarга barqaror search_path
+alter function public.set_updated_at()  set search_path = public, pg_temp;
+alter function public.davomat_hisobla() set search_path = public, pg_temp;
+alter function public.imed_sof_min(timestamptz, timestamptz, timestamptz, timestamptz)
+  set search_path = public, pg_temp;
+
+-- Tayyor. Keyingi qadam: davomat to'liq oqimi (lokatsiya + dumaloq video).
