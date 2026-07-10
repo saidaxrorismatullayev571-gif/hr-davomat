@@ -34,18 +34,55 @@ Maqsad: eski sekin Google Apps Script tizimini tez, avtomatik **Supabase + gramm
 
 To'liq road map — [`iMed_HR_Bot_v2_TZ.md`](./iMed_HR_Bot_v2_TZ.md) §13.
 
+## Loyiha tuzilishi
+
+```
+hr-davomat/
+├── src/
+│   ├── index.ts            # kirish nuqtasi (polling)
+│   ├── bot.ts              # grammY: private-only guard, session, menyu ulash
+│   ├── config/index.ts     # .env + ofis/davomat konstantalari
+│   ├── db/
+│   │   ├── index.ts         # Supabase klient (service_role)
+│   │   └── types.ts         # generatsiya qilingan tiplar (Supabase MCP)
+│   ├── services/
+│   │   ├── xodim.ts         # xodim qidirish, rol aniqlash
+│   │   └── sessiya.ts       # Supabase session adapter (bot_sessiya)
+│   ├── handlers/
+│   │   ├── start.ts         # /start → rol menyu
+│   │   └── davomat.ts       # keldi/tushlik/ketdi (skelet)
+│   ├── utils/menu.ts        # rol asosidagi klaviaturalar
+│   └── cron/                # (FAZA 2 — node-cron)
+├── iMed_HR_Bot_v2_TZ.md
+├── iMed_HR_Bot_v2_schema.sql
+├── CLAUDE.md
+├── package.json · tsconfig.json · .env.example
+```
+
 ## Muhit o'zgaruvchilari
 
 ```
 BOT_TOKEN=            # @BotFather (avval TEST bot tokeni!)
-SUPABASE_URL=
+SUPABASE_URL=https://qechpuaeccynfvfihdrk.supabase.co
 SUPABASE_SERVICE_KEY= # faqat serverda — hech qachon gitga yozma
 GROUP_CHAT_ID=-1003966396343
 GROUP_CHAT_ID_2=-1003987794980
 GROUP_TOPIC_ID_2=3393
 ```
 
+## Lokal ishga tushirish
+
+```bash
+npm install
+cp .env.example .env      # BOT_TOKEN va SUPABASE_SERVICE_KEY ni to'ldiring
+npm run dev               # tsx watch — polling
+```
+
+Boshqa skriptlar: `npm run typecheck`, `npm run build` (→ `dist/`), `npm start`.
+
 ## Status
 
-**Faza 0** — poydevor hujjatlari joylashtirildi. Keyingi qadam: Supabase sxemasini
-qo'llash + grammY skelet (Faza 1).
+- **Faza 0** — poydevor hujjatlari ✅
+- **Supabase** — `iMed HR` loyihasi yaratildi, sxema qo'llandi (11 jadval + 2 view + `imed_sof_min`) ✅
+- **Faza 1 (skelet)** — grammY: private-only guard, rol aniqlash, rol menyu, Supabase sessiya ✅
+- **Keyingi:** davomat to'liq oqimi (lokatsiya + dumaloq video) → yozuv → kunlik hisobot → avtoDavomat
