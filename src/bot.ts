@@ -7,6 +7,7 @@ import {
 } from "./services/sessiya.js";
 import { handleStart } from "./handlers/start.js";
 import { DAVOMAT_HANDLERLAR } from "./handlers/davomat.js";
+import { superAdminmi } from "./services/xodim.js";
 import { TUGMA } from "./utils/menu.js";
 
 export type BotContext = Context & SessionFlavor<SessionData>;
@@ -45,6 +46,13 @@ export function createBot(): Bot<BotContext> {
   });
   bot.hears(TUGMA.xodimlar, async (ctx) => {
     await ctx.reply("👥 Xodim boshqaruvi — FAZA 1 keyingi bosqichда qo'shiladi.");
+  });
+
+  // ── Super admin paneli (SKELET) ───────────────────────────
+  bot.hears(TUGMA.admin, async (ctx) => {
+    const tgId = ctx.from?.id;
+    if (!tgId || !superAdminmi(tgId)) return;
+    await ctx.reply("⚙️ Super admin panel — to'liq access. Funksiyalar keyingi bosqichда.");
   });
 
   // ── Boshqa har qanday xabar ───────────────────────────────

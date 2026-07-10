@@ -1,4 +1,5 @@
 import { supabase } from "../db/index.js";
+import { SUPER_ADMIN_IDS } from "../config/index.js";
 import type { Tables } from "../db/types.js";
 
 export type Xodim = Tables<"xodimlar">;
@@ -17,6 +18,16 @@ export const ROLLAR: readonly Rol[] = [
 /** Rahbar huquqiga ega rollar (hisobot, xodim boshqaruvi, tasdiqlash). */
 export function rahbarmi(rol: string): boolean {
   return rol === "Nazoratchi" || rol === "Director";
+}
+
+/** Super admin — to'liq access (barcha rollardan yuqori). */
+export function superAdminmi(telegramId: number): boolean {
+  return SUPER_ADMIN_IDS.includes(telegramId);
+}
+
+/** Xodim rahbar ko'rinishini (hisobot/boshqaruv) ko'ra oladimi? */
+export function rahbarAccessmi(xodim: Pick<Xodim, "telegram_id" | "rol">): boolean {
+  return superAdminmi(xodim.telegram_id) || rahbarmi(xodim.rol);
 }
 
 /**

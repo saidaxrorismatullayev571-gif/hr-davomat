@@ -1,5 +1,4 @@
 import { Keyboard } from "grammy";
-import { rahbarmi } from "../services/xodim.js";
 
 /** Davomat tugmalari (barcha rollar uchun) — TZ 5.3. */
 export const TUGMA = {
@@ -10,14 +9,24 @@ export const TUGMA = {
   // Rahbar
   hisobot: "📊 Hisobotlar",
   xodimlar: "👥 Xodimlar",
+  // Super admin
+  admin: "⚙️ Super admin",
 } as const;
 
+export interface MenuAccess {
+  /** Rahbar tugmalari (hisobot, xodim boshqaruvi). */
+  rahbar: boolean;
+  /** Super admin tugmasi (to'liq access). */
+  superAdmin: boolean;
+}
+
 /**
- * Rolга mos menyu. Har kim faqat o'z tugmalarini ko'radi (TZ 1.4).
- * Sotuvchi/Marketolog/Test → faqat davomat.
- * Nazoratchi/Director → davomat + rahbar tugmalari.
+ * Access darajasiga mos menyu. Har kim faqat o'z tugmalarini ko'radi (TZ 1.4).
+ *  - Barcha xodim → davomat tugmalari.
+ *  - Rahbar/super admin → + hisobot, xodimlar.
+ *  - Super admin → + super admin paneli.
  */
-export function menuForRole(rol: string): Keyboard {
+export function menuForAccess(access: MenuAccess): Keyboard {
   const kb = new Keyboard()
     .text(TUGMA.keldi)
     .text(TUGMA.ketdi)
@@ -26,8 +35,12 @@ export function menuForRole(rol: string): Keyboard {
     .text(TUGMA.tushlikdan)
     .row();
 
-  if (rahbarmi(rol)) {
+  if (access.rahbar || access.superAdmin) {
     kb.text(TUGMA.hisobot).text(TUGMA.xodimlar).row();
+  }
+
+  if (access.superAdmin) {
+    kb.text(TUGMA.admin).row();
   }
 
   return kb.resized().persistent();

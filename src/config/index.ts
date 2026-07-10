@@ -37,3 +37,11 @@ export const OFIS = {
 
 /** Avtomatik davomat qilinadigan xodimlar (ism bo'yicha moslash) — TZ 5.5. */
 export const AVTO_DAVOMAT_ISMLAR = ["Himmatulloh", "Arabboy", "Saidaxror"] as const;
+
+/**
+ * Super admin — to'liq access (rol/CEO'дан ham yuqori). Har qanday funksiyaga
+ * kirish huquqiga ega. Bu ro'yxatдаgi telegram_id barcha tekshiruvlardan o'tadi.
+ */
+export const SUPER_ADMIN_IDS: readonly number[] = [
+  1318046590, // Saidaxror — loyiha egasi
+];
