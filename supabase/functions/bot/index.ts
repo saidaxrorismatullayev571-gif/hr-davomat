@@ -263,6 +263,26 @@ function menuForAccess(rahbar: boolean, superAdmin: boolean): Keyboard {
 function fmtSum(n: number): string {
   return Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ");
 }
+
+// QuickChart orqali grafik rasm URL (bepul, kalitsiz)
+// deno-lint-ignore no-explicit-any
+async function chartUrl(config: any): Promise<string | null> {
+  try {
+    const resp = await fetch("https://quickchart.io/chart/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chart: config, width: 700, height: 420,
+        backgroundColor: "white", version: "2",
+      }),
+    });
+    const j = await resp.json();
+    return typeof j.url === "string" ? j.url : null;
+  } catch (e) {
+    console.error("chart:", e);
+    return null;
+  }
+}
 // deno-lint-ignore no-explicit-any
 function anaMenu(x: any): Keyboard {
   return menuForAccess(rahbarmi(x.rol), superAdminmi(x.telegram_id));
@@ -410,6 +430,20 @@ bot.hears(TUGMA.hisobot, async (ctx) => {
   const matn = await bugungiHisobot();
   const kb = new InlineKeyboard().text("📆 Oylik davomat", "hisobot_oy");
   await ctx.reply(matn, { parse_mode: "HTML", reply_markup: kb });
+  // Vizual: keldi/kelmadi doughnut
+  // deno-lint-ignore no-explicit-any
+  const { data: xl } = await supabase.from("xodimlar").select("telegram_id").eq("arxiv", false) as { data: any[] | null };
+  // deno-lint-ignore no-explicit-any
+  const { data: dl } = await supabase.from("davomat").select("telegram_id, keldi").eq("sana", sanaTashkent()) as { data: any[] | null };
+  const kelganSet = new Set((dl ?? []).filter((d) => d.keldi).map((d) => d.telegram_id));
+  const kelgan = (xl ?? []).filter((x) => kelganSet.has(x.telegram_id)).length;
+  const kelmagan = (xl ?? []).length - kelgan;
+  const url = await chartUrl({
+    type: "doughnut",
+    data: { labels: ["Keldi", "Kelmadi"], datasets: [{ data: [kelgan, kelmagan], backgroundColor: ["#59a14f", "#e15759"] }] },
+    options: { title: { display: true, text: `Bugungi davomat — ${sanaTashkent()}`, fontSize: 18 } },
+  });
+  if (url) await ctx.replyWithPhoto(url);
 });
 
 // Oylik davomat (har xodim necha kun ishladi)
@@ -420,8 +454,23 @@ bot.callbackQuery("hisobot_oy", async (ctx) => {
     return;
   }
   await ctx.answerCallbackQuery();
-  const matn = await oylikDavomatHisobot();
-  await ctx.reply(matn, { parse_mode: "HTML" });
+  const oy = joriyOy();
+  // deno-lint-ignore no-explicit-any
+  const { data } = await supabase.rpc("oylik_davomat", { p_oy: oy }) as { data: any[] | null };
+  const qatorlar: string[] = [`📆 <b>Oylik davomat</b> — ${oy}`, ""];
+  for (const r of data ?? []) {
+    qatorlar.push(`• ${r.ism} (${r.rol}): <b>${r.kelgan_kun}</b> kun · ${r.jami_soat}s`);
+  }
+  await ctx.reply(qatorlar.join("\n"), { parse_mode: "HTML" });
+  const url = await chartUrl({
+    type: "horizontalBar",
+    data: {
+      labels: (data ?? []).map((r) => r.ism),
+      datasets: [{ label: "Ish soati", data: (data ?? []).map((r) => Number(r.jami_soat)), backgroundColor: "#4e79a7" }],
+    },
+    options: { title: { display: true, text: `Oylik ish soati — ${oy}`, fontSize: 18 }, legend: { display: false } },
+  });
+  if (url) await ctx.replyWithPhoto(url);
 });
 
 bot.hears(TUGMA.xodimlar, async (ctx) => {
@@ -479,9 +528,28 @@ bot.hears(TUGMA.maosh, async (ctx) => {
     await ctx.reply("Bu bo'lim faqat rahbarlar uchun.");
     return;
   }
-  const matn = await maoshHisobot();
+  const oy = joriyOy();
+  // deno-lint-ignore no-explicit-any
+  const { data } = await supabase.rpc("maosh_oylik", { p_oy: oy }) as { data: any[] | null };
+  const qatorlar: string[] = [`💰 <b>Oylik maosh</b> — ${oy}`, ""];
+  let jami = 0;
+  for (const r of data ?? []) {
+    jami += Number(r.yakuniy);
+    const bonus = Number(r.bonus) > 0 ? ` (+${fmtSum(Number(r.bonus))} bonus)` : "";
+    qatorlar.push(`• ${r.ism} — <b>${fmtSum(Number(r.yakuniy))}</b> so'm${bonus} · ${r.jami_soat}s`);
+  }
+  qatorlar.push("", `Jami to'lov: <b>${fmtSum(jami)}</b> so'm`);
   const kb = new InlineKeyboard().text("📥 Eksport (CSV)", "maosh_export");
-  await ctx.reply(matn, { parse_mode: "HTML", reply_markup: kb });
+  await ctx.reply(qatorlar.join("\n"), { parse_mode: "HTML", reply_markup: kb });
+  const url = await chartUrl({
+    type: "horizontalBar",
+    data: {
+      labels: (data ?? []).map((r) => r.ism),
+      datasets: [{ label: "Maosh (so'm)", data: (data ?? []).map((r) => Number(r.yakuniy)), backgroundColor: "#59a14f" }],
+    },
+    options: { title: { display: true, text: `Oylik maosh — ${oy}`, fontSize: 18 }, legend: { display: false } },
+  });
+  if (url) await ctx.replyWithPhoto(url);
 });
 
 // Maosh — CSV eksport
