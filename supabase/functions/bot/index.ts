@@ -6,6 +6,7 @@ import {
   session,
   webhookCallback,
   Keyboard,
+  InlineKeyboard,
   type SessionFlavor,
 } from "npm:grammy@1.30.0";
 import { createClient } from "npm:@supabase/supabase-js@2.45.0";
@@ -35,6 +36,10 @@ interface SessionData {
   lat?: number;
   lng?: number;
   masofa?: number;
+  // Xodim qo'shish oqimi
+  xodimStep?: "ism" | "tgid";
+  yangiIsm?: string;
+  yangiTgId?: number;
 }
 type Ctx = Context & SessionFlavor<SessionData>;
 
@@ -157,6 +162,17 @@ async function bugungiHisobot(): Promise<string> {
   return qatorlar.join("\n");
 }
 
+// Faol xodimlar ro'yxati
+async function xodimlarRoyxati(): Promise<string> {
+  // deno-lint-ignore no-explicit-any
+  const { data } = await supabase
+    .from("xodimlar").select("ism, rol").eq("arxiv", false).order("rol").order("ism") as { data: any[] | null };
+  const qatorlar: string[] = ["👥 <b>Xodimlar</b>", ""];
+  for (const x of data ?? []) qatorlar.push(`• ${x.ism} — ${x.rol}`);
+  qatorlar.push("", `Jami: <b>${(data ?? []).length}</b>`);
+  return qatorlar.join("\n");
+}
+
 // ── Menyu ─────────────────────────────────────────────────
 const TUGMA = {
   keldi: "🟢 Keldim", ketdi: "🔴 Ketdim",
@@ -219,7 +235,12 @@ bot.command("start", async (ctx) => {
   if (!tgId) return;
   const x = await xodimByTgId(tgId);
   if (!x) {
-    await ctx.reply("Assalomu alaykum! 👋\nSiz ro'yxatda yo'qsiz. Rahbarga murojaat qiling.");
+    await ctx.reply(
+      "Assalomu alaykum! 👋\nSiz hozircha ro'yxatda yo'qsiz.\n\n" +
+        `Sizning Telegram ID: <b>${tgId}</b>\n` +
+        "Ushbu ID ni rahbaringizga bering — u sizni tizimga qo'shadi.",
+      { parse_mode: "HTML" },
+    );
     return;
   }
   const superAdmin = superAdminmi(tgId);
@@ -301,7 +322,52 @@ bot.hears(TUGMA.hisobot, async (ctx) => {
   await ctx.reply(matn, { parse_mode: "HTML" });
 });
 bot.hears(TUGMA.xodimlar, async (ctx) => {
-  await ctx.reply("👥 Xodim boshqaruvi — keyingi bosqichda qo'shiladi.");
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || (!rahbarmi(x.rol) && !superAdminmi(x.telegram_id))) {
+    await ctx.reply("Bu bo'lim faqat rahbarlar uchun.");
+    return;
+  }
+  const matn = await xodimlarRoyxati();
+  const kb = new InlineKeyboard().text("➕ Xodim qo'shish", "xq_add");
+  await ctx.reply(matn, { parse_mode: "HTML", reply_markup: kb });
+});
+
+// Xodim qo'shish — boshlash
+bot.callbackQuery("xq_add", async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || (!rahbarmi(x.rol) && !superAdminmi(x.telegram_id))) {
+    await ctx.answerCallbackQuery("Ruxsat yo'q");
+    return;
+  }
+  ctx.session.xodimStep = "ism";
+  ctx.session.yangiIsm = undefined;
+  ctx.session.yangiTgId = undefined;
+  await ctx.answerCallbackQuery();
+  await ctx.reply("Yangi xodim ismini kiriting:");
+});
+
+// Xodim qo'shish — rol tanlash (yakuniy)
+bot.callbackQuery(/^xq_rol_(.+)$/, async (ctx) => {
+  const rol = ctx.match![1];
+  const ism = ctx.session.yangiIsm;
+  const tgid = ctx.session.yangiTgId;
+  if (!ism || !tgid) {
+    await ctx.answerCallbackQuery("Ma'lumot yo'q, qaytadan boshlang.");
+    return;
+  }
+  const { error } = await supabase.from("xodimlar").upsert(
+    { telegram_id: tgid, ism, rol, arxiv: false },
+    { onConflict: "telegram_id" },
+  );
+  ctx.session.xodimStep = undefined;
+  ctx.session.yangiIsm = undefined;
+  ctx.session.yangiTgId = undefined;
+  await ctx.answerCallbackQuery();
+  if (error) {
+    await ctx.reply("❌ Xato: " + error.message);
+    return;
+  }
+  await ctx.reply(`✅ Qo'shildi: <b>${ism}</b> — ${rol} (ID ${tgid})`, { parse_mode: "HTML" });
 });
 bot.hears(TUGMA.admin, async (ctx) => {
   if (!superAdminmi(ctx.from!.id)) return;
@@ -375,6 +441,35 @@ bot.on("message:video_note", async (ctx) => {
 });
 
 bot.on("message", async (ctx) => {
+  // Xodim qo'shish oqimi — matn kiritish
+  const t = ctx.message?.text?.trim();
+  if (ctx.session.xodimStep && t) {
+    if (ctx.session.xodimStep === "ism") {
+      ctx.session.yangiIsm = t;
+      ctx.session.xodimStep = "tgid";
+      await ctx.reply(
+        `Ism: <b>${t}</b>\nEndi xodimning Telegram ID (raqam) ni kiriting.\n\n` +
+          "(Xodim botga /start yozsa, o'z ID sini ko'radi — o'shani so'rang.)",
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+    if (ctx.session.xodimStep === "tgid") {
+      const id = Number(t);
+      if (!Number.isInteger(id) || id <= 0) {
+        await ctx.reply("❌ Noto'g'ri ID. Faqat raqam kiriting (masalan 123456789).");
+        return;
+      }
+      ctx.session.yangiTgId = id;
+      ctx.session.xodimStep = undefined;
+      const kb = new InlineKeyboard()
+        .text("Sotuvchi", "xq_rol_Sotuvchi").text("Nazoratchi", "xq_rol_Nazoratchi").row()
+        .text("Marketolog", "xq_rol_Marketolog").text("Director", "xq_rol_Director").row()
+        .text("Test (sinov)", "xq_rol_Test");
+      await ctx.reply(`ID: <b>${id}</b>\nRolni tanlang:`, { parse_mode: "HTML", reply_markup: kb });
+      return;
+    }
+  }
   await ctx.reply("Menyudan tugmani tanlang yoki /start bosing.");
 });
 
