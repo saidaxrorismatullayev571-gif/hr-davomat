@@ -144,7 +144,7 @@ async function bugungiHisobot(): Promise<string> {
   const sana = sanaTashkent();
   // deno-lint-ignore no-explicit-any
   const { data: xlar } = await supabase
-    .from("xodimlar").select("telegram_id, ism").eq("arxiv", false).order("ism") as { data: any[] | null };
+    .from("xodimlar").select("telegram_id, ism").eq("arxiv", false).eq("hisobga_olinmaydi", false).order("ism") as { data: any[] | null };
   // deno-lint-ignore no-explicit-any
   const { data: dlar } = await supabase
     .from("davomat").select("*").eq("sana", sana) as { data: any[] | null };
@@ -174,7 +174,7 @@ async function davomatRows(): Promise<DavomatRow[]> {
   const sana = sanaTashkent();
   // deno-lint-ignore no-explicit-any
   const { data: xlar } = await supabase
-    .from("xodimlar").select("telegram_id, ism").eq("arxiv", false).order("ism") as { data: any[] | null };
+    .from("xodimlar").select("telegram_id, ism").eq("arxiv", false).eq("hisobga_olinmaydi", false).order("ism") as { data: any[] | null };
   // deno-lint-ignore no-explicit-any
   const { data: dlar } = await supabase
     .from("davomat").select("*").eq("sana", sana) as { data: any[] | null };
@@ -324,7 +324,7 @@ async function openaiKalit(): Promise<string | null> {
 // Qayta ishlatiladigan grafik URL'lari (tugma + ovozli savol uchun)
 async function bugunDoughnutUrl(): Promise<string | null> {
   // deno-lint-ignore no-explicit-any
-  const { data: xl } = await supabase.from("xodimlar").select("telegram_id").eq("arxiv", false) as { data: any[] | null };
+  const { data: xl } = await supabase.from("xodimlar").select("telegram_id").eq("arxiv", false).eq("hisobga_olinmaydi", false) as { data: any[] | null };
   // deno-lint-ignore no-explicit-any
   const { data: dl } = await supabase.from("davomat").select("telegram_id, keldi").eq("sana", sanaTashkent()) as { data: any[] | null };
   const kelganSet = new Set((dl ?? []).filter((d) => d.keldi).map((d) => d.telegram_id));

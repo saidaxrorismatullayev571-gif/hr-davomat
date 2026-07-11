@@ -34,7 +34,7 @@ returns table(
     select telegram_id, sum(summa) as bonus from bonus
     where oy = p_oy group by telegram_id
   ) b on b.telegram_id = x.telegram_id
-  where x.arxiv = false
+  where x.arxiv = false and x.hisobga_olinmaydi = false
   order by x.ism;
 $$;
 

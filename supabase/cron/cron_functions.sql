@@ -58,7 +58,7 @@ begin
       d.keldi, d.ketdi, d.sof_min, d.holat
     from public.xodimlar xo
     left join public.davomat d on d.telegram_id = xo.telegram_id and d.sana = d_sana
-    where xo.arxiv = false
+    where xo.arxiv = false and xo.hisobga_olinmaydi = false
   ) x;
 
   body := jsonb_build_object(
