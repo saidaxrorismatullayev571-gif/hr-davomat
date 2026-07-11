@@ -283,6 +283,47 @@ async function chartUrl(config: any): Promise<string | null> {
     return null;
   }
 }
+async function openaiKalit(): Promise<string | null> {
+  const { data } = await supabase.from("config").select("qiymat").eq("kalit", "openai_key").maybeSingle();
+  return data?.qiymat ?? null;
+}
+
+// Qayta ishlatiladigan grafik URL'lari (tugma + ovozli savol uchun)
+async function bugunDoughnutUrl(): Promise<string | null> {
+  // deno-lint-ignore no-explicit-any
+  const { data: xl } = await supabase.from("xodimlar").select("telegram_id").eq("arxiv", false) as { data: any[] | null };
+  // deno-lint-ignore no-explicit-any
+  const { data: dl } = await supabase.from("davomat").select("telegram_id, keldi").eq("sana", sanaTashkent()) as { data: any[] | null };
+  const kelganSet = new Set((dl ?? []).filter((d) => d.keldi).map((d) => d.telegram_id));
+  const kelgan = (xl ?? []).filter((x2) => kelganSet.has(x2.telegram_id)).length;
+  const kelmagan = (xl ?? []).length - kelgan;
+  return await chartUrl({
+    type: "doughnut",
+    data: { labels: ["Keldi", "Kelmadi"], datasets: [{ data: [kelgan, kelmagan], backgroundColor: ["#59a14f", "#e15759"] }] },
+    options: { title: { display: true, text: `Bugungi davomat — ${sanaTashkent()}`, fontSize: 18 } },
+  });
+}
+async function oylikBarUrl(): Promise<string | null> {
+  const oy = joriyOy();
+  // deno-lint-ignore no-explicit-any
+  const { data } = await supabase.rpc("oylik_davomat", { p_oy: oy }) as { data: any[] | null };
+  return await chartUrl({
+    type: "horizontalBar",
+    data: { labels: (data ?? []).map((r) => r.ism), datasets: [{ label: "Ish soati", data: (data ?? []).map((r) => Number(r.jami_soat)), backgroundColor: "#4e79a7" }] },
+    options: { title: { display: true, text: `Oylik ish soati — ${oy}`, fontSize: 18 }, legend: { display: false } },
+  });
+}
+async function maoshBarUrl(): Promise<string | null> {
+  const oy = joriyOy();
+  // deno-lint-ignore no-explicit-any
+  const { data } = await supabase.rpc("maosh_oylik", { p_oy: oy }) as { data: any[] | null };
+  return await chartUrl({
+    type: "horizontalBar",
+    data: { labels: (data ?? []).map((r) => r.ism), datasets: [{ label: "Maosh", data: (data ?? []).map((r) => Number(r.yakuniy)), backgroundColor: "#59a14f" }] },
+    options: { title: { display: true, text: `Oylik maosh — ${oy}`, fontSize: 18 }, legend: { display: false } },
+  });
+}
+
 // deno-lint-ignore no-explicit-any
 function anaMenu(x: any): Keyboard {
   return menuForAccess(rahbarmi(x.rol), superAdminmi(x.telegram_id));
@@ -658,6 +699,78 @@ bot.on("message:video_note", async (ctx) => {
     const soat = ((data?.sof_min ?? 0) / 60).toFixed(1);
     await ctx.reply(`✅ Ketdi qayd etildi: ${soatMatn(now)}. Bugungi ish: ${soat} soat.`, { reply_markup: anaMenu(x) });
     await davomatXulosa(`🔴 ${x.ism} — Ketdi: ${soatMatn(now)} (${soat} soat)`);
+  }
+});
+
+// Ovozli savol (rahbar/super admin) — Whisper + AI niyat + vizual javob
+bot.on("message:voice", async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || (!rahbarmi(x.rol) && !superAdminmi(x.telegram_id))) {
+    await ctx.reply("Ovozli savol faqat rahbarlar uchun.");
+    return;
+  }
+  const key = await openaiKalit();
+  if (!key) { await ctx.reply("OpenAI kaliti sozlanmagan."); return; }
+
+  await ctx.reply("🎤 Eshitilmoqda...");
+  try {
+    const file = await ctx.getFile();
+    const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
+    const audioBlob = await (await fetch(fileUrl)).blob();
+
+    const form = new FormData();
+    form.append("file", audioBlob, "voice.oga");
+    form.append("model", "whisper-1");
+    form.append("language", "uz");
+    const wResp = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}` },
+      body: form,
+    });
+    // deno-lint-ignore no-explicit-any
+    const wJson = await wResp.json() as any;
+    const savol = String(wJson.text ?? "").trim();
+    if (!savol) { await ctx.reply("Ovozni tushunolmadim. Qayta urinib ko'ring."); return; }
+    await ctx.reply(`🗣 Savol: <i>${savol}</i>`, { parse_mode: "HTML" });
+
+    const cResp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        temperature: 0,
+        messages: [
+          { role: "system", content: "Foydalanuvchining HR/davomat savolini quyidagi turlardan biriga ajrat. FAQAT bitta so'z qaytar: bugun, oylik, maosh, xodimlar, boshqa. Ma'nolar: 'bugun'=bugungi davomat, kim keldi yoki kelmadi. 'oylik'=bu oyda kim necha kun yoki necha soat ishladi. 'maosh'=oylik maosh, kim qancha pul oladi. 'xodimlar'=xodimlar ro'yxati." },
+          { role: "user", content: savol },
+        ],
+      }),
+    });
+    // deno-lint-ignore no-explicit-any
+    const cJson = await cResp.json() as any;
+    const kat = String(cJson.choices?.[0]?.message?.content ?? "boshqa").toLowerCase();
+
+    if (kat.includes("bugun")) {
+      await ctx.reply(await bugungiHisobot(), { parse_mode: "HTML" });
+      const u = await bugunDoughnutUrl();
+      if (u) await ctx.replyWithPhoto(u);
+    } else if (kat.includes("oylik")) {
+      await ctx.reply(await oylikDavomatHisobot(), { parse_mode: "HTML" });
+      const u = await oylikBarUrl();
+      if (u) await ctx.replyWithPhoto(u);
+    } else if (kat.includes("maosh")) {
+      await ctx.reply(await maoshHisobot(), { parse_mode: "HTML" });
+      const u = await maoshBarUrl();
+      if (u) await ctx.replyWithPhoto(u);
+    } else if (kat.includes("xodim")) {
+      await ctx.reply(await xodimlarRoyxati(), { parse_mode: "HTML" });
+    } else {
+      await ctx.reply(
+        "Savolni aniq tushunmadim. Masalan:\n• \"Bugun kim kelmadi?\"\n• \"Bu oy kim necha kun ishladi?\"\n• \"Maosh qancha?\"",
+      );
+    }
+  } catch (e) {
+    console.error("voice:", e);
+    await ctx.reply("❌ Ovozli savolni qayta ishlashda xato yuz berdi.");
   }
 });
 
