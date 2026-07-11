@@ -687,20 +687,30 @@ bot.on("message:video_note", async (ctx) => {
   const now = new Date();
   const flow = ctx.session.davomatFlow;
   if (flow === "keldi") {
-    const { data } = await supabase.from("davomat").upsert({
+    const { data, error } = await supabase.from("davomat").upsert({
       telegram_id: x.telegram_id, sana: sanaTashkent(now), keldi: now.toISOString(),
       lat: ctx.session.lat, lng: ctx.session.lng, masofa_m: ctx.session.masofa,
       video_file_id: vn.file_id, holat: keldiHolat(now),
-    }, { onConflict: "telegram_id,sana" }).select().single();
+    }, { onConflict: "telegram_id,sana" }).select().maybeSingle();
     tozala(ctx);
-    const holat = data?.holat ?? "";
+    if (error) {
+      console.error("keldi upsert:", error);
+      await ctx.reply("❌ Saqlashda xato. Qayta urinib ko'ring.", { reply_markup: anaMenu(x) });
+      return;
+    }
+    const holat = data?.holat ?? keldiHolat(now);
     await ctx.reply(`✅ Keldi qayd etildi: ${soatMatn(now)} — ${holat}`, { reply_markup: anaMenu(x) });
     await davomatXulosa(`🟢 ${x.ism} — Keldi: ${soatMatn(now)} (${holat})`);
   } else {
-    const { data } = await supabase.from("davomat").update({
+    const { data, error } = await supabase.from("davomat").update({
       ketdi: now.toISOString(), video_file_id: vn.file_id,
-    }).eq("telegram_id", x.telegram_id).eq("sana", sanaTashkent(now)).select().single();
+    }).eq("telegram_id", x.telegram_id).eq("sana", sanaTashkent(now)).select().maybeSingle();
     tozala(ctx);
+    if (error) {
+      console.error("ketdi update:", error);
+      await ctx.reply("❌ Saqlashda xato. Qayta urinib ko'ring.", { reply_markup: anaMenu(x) });
+      return;
+    }
     const soat = ((data?.sof_min ?? 0) / 60).toFixed(1);
     await ctx.reply(`✅ Ketdi qayd etildi: ${soatMatn(now)}. Bugungi ish: ${soat} soat.`, { reply_markup: anaMenu(x) });
     await davomatXulosa(`🔴 ${x.ism} — Ketdi: ${soatMatn(now)} (${soat} soat)`);
