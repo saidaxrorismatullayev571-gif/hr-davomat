@@ -348,13 +348,20 @@ async function davomatXulosa(matn: string): Promise<void> {
   if (gid) {
     const topic = cfg.get("xulosa_topic_id");
     try {
-      await bot.api.sendMessage(gid, matn, topic ? { message_thread_id: Number(topic) } : {});
+      await bot.api.sendMessage(gid, matn, {
+        parse_mode: "HTML",
+        ...(topic ? { message_thread_id: Number(topic) } : {}),
+      });
     } catch (e) { console.error("xulosa guruh:", e); }
     return;
   }
-  try { await bot.api.sendMessage(GROUP_CHAT_ID, matn); } catch (e) { console.error("g1:", e); }
   try {
-    await bot.api.sendMessage(GROUP_CHAT_ID_2, matn, { message_thread_id: GROUP_TOPIC_ID_2 });
+    await bot.api.sendMessage(GROUP_CHAT_ID, matn, { parse_mode: "HTML" });
+  } catch (e) { console.error("g1:", e); }
+  try {
+    await bot.api.sendMessage(GROUP_CHAT_ID_2, matn, {
+      parse_mode: "HTML", message_thread_id: GROUP_TOPIC_ID_2,
+    });
   } catch (e) { console.error("g2:", e); }
 }
 
@@ -699,8 +706,13 @@ bot.on("message:video_note", async (ctx) => {
       return;
     }
     const holat = data?.holat ?? keldiHolat(now);
-    await ctx.reply(`✅ Keldi qayd etildi: ${soatMatn(now)} — ${holat}`, { reply_markup: anaMenu(x) });
-    await davomatXulosa(`🟢 ${x.ism} — Keldi: ${soatMatn(now)} (${holat})`);
+    await ctx.reply(
+      `✅ Keldi qayd etildi: <b>${soatMatn(now)}</b> — ${esc(holat)}`,
+      { parse_mode: "HTML", reply_markup: anaMenu(x) },
+    );
+    const emoji = holat === "Kech qoldi" ? "🟠" : "🟢";
+    const izoh = holat === "Kech qoldi" ? " — <i>kech qoldi</i>" : "";
+    await davomatXulosa(`${emoji} <b>${esc(x.ism)}</b> keldi · <b>${soatMatn(now)}</b>${izoh}`);
   } else {
     const { data, error } = await supabase.from("davomat").update({
       ketdi: now.toISOString(), video_file_id: vn.file_id,
@@ -712,8 +724,11 @@ bot.on("message:video_note", async (ctx) => {
       return;
     }
     const soat = ((data?.sof_min ?? 0) / 60).toFixed(1);
-    await ctx.reply(`✅ Ketdi qayd etildi: ${soatMatn(now)}. Bugungi ish: ${soat} soat.`, { reply_markup: anaMenu(x) });
-    await davomatXulosa(`🔴 ${x.ism} — Ketdi: ${soatMatn(now)} (${soat} soat)`);
+    await ctx.reply(
+      `✅ Ketdi qayd etildi: <b>${soatMatn(now)}</b>. Bugungi ish: <b>${soat} soat</b>.`,
+      { parse_mode: "HTML", reply_markup: anaMenu(x) },
+    );
+    await davomatXulosa(`🔴 <b>${esc(x.ism)}</b> ketdi · <b>${soatMatn(now)}</b> — bugun <b>${soat} soat</b>`);
   }
 });
 
