@@ -197,6 +197,19 @@ function lokatsiyaKlaviatura(): Keyboard {
 
 // ── Guruhga xulosa ────────────────────────────────────────
 async function davomatXulosa(matn: string): Promise<void> {
+  // Manzil config jadvalidan (test uchun oson o'zgartirish). Bo'lmasa production 2 guruh.
+  // deno-lint-ignore no-explicit-any
+  const { data } = await supabase.from("config").select("kalit, qiymat")
+    .in("kalit", ["xulosa_group_id", "xulosa_topic_id"]) as { data: any[] | null };
+  const cfg = new Map<string, string>((data ?? []).map((r) => [r.kalit, r.qiymat]));
+  const gid = cfg.get("xulosa_group_id");
+  if (gid) {
+    const topic = cfg.get("xulosa_topic_id");
+    try {
+      await bot.api.sendMessage(gid, matn, topic ? { message_thread_id: Number(topic) } : {});
+    } catch (e) { console.error("xulosa guruh:", e); }
+    return;
+  }
   try { await bot.api.sendMessage(GROUP_CHAT_ID, matn); } catch (e) { console.error("g1:", e); }
   try {
     await bot.api.sendMessage(GROUP_CHAT_ID_2, matn, { message_thread_id: GROUP_TOPIC_ID_2 });
