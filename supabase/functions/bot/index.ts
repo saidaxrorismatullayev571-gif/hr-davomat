@@ -127,6 +127,10 @@ async function xodimByTgId(tgId: number): Promise<any | null> {
 }
 const rahbarmi = (rol: string) => rol === "Nazoratchi" || rol === "Director";
 const superAdminmi = (id: number) => SUPER_ADMIN_IDS.includes(id);
+// TEST REJIMI: bu ID'lar uchun cheksiz keldi/ketdi/tushlik, masofa/vaqt cheklovi tekshirilmaydi.
+// Production'dan oldin ro'yxatni bo'shatish kerak: const TEST_IDS: number[] = [];
+const TEST_IDS = [1318046590];
+const testRejimmi = (id: number) => TEST_IDS.includes(id);
 
 // ── Davomat DB ────────────────────────────────────────────
 // deno-lint-ignore no-explicit-any
@@ -447,7 +451,7 @@ bot.hears(TUGMA.keldi, async (ctx) => {
   const x = await xodimByTgId(ctx.from!.id);
   if (!x) { await ctx.reply("Siz ro'yxatda yo'qsiz."); return; }
   const bugun = await bugungiDavomat(x.telegram_id);
-  if (bugun?.keldi) {
+  if (bugun?.keldi && !testRejimmi(x.telegram_id)) {
     await ctx.reply(`Bugun allaqachon "Keldim" qayd etilgan (${soatMatn(new Date(bugun.keldi))}).`);
     return;
   }
@@ -463,8 +467,8 @@ bot.hears(TUGMA.ketdi, async (ctx) => {
   const x = await xodimByTgId(ctx.from!.id);
   if (!x) { await ctx.reply("Siz ro'yxatda yo'qsiz."); return; }
   const bugun = await bugungiDavomat(x.telegram_id);
-  if (!bugun?.keldi) { await ctx.reply('Avval "Keldim" qayd eting.'); return; }
-  if (bugun.ketdi) {
+  if (!bugun?.keldi && !testRejimmi(x.telegram_id)) { await ctx.reply('Avval "Keldim" qayd eting.'); return; }
+  if (bugun?.ketdi && !testRejimmi(x.telegram_id)) {
     await ctx.reply(`Bugun allaqachon "Ketdim" qayd etilgan (${soatMatn(new Date(bugun.ketdi))}).`);
     return;
   }
@@ -477,13 +481,13 @@ bot.hears(TUGMA.tushlikka, async (ctx) => {
   const x = await xodimByTgId(ctx.from!.id);
   if (!x) { await ctx.reply("Siz ro'yxatda yo'qsiz."); return; }
   const min = kunMin();
-  if (min < 12 * 60 || min >= 14 * 60) {
+  if ((min < 12 * 60 || min >= 14 * 60) && !testRejimmi(x.telegram_id)) {
     await ctx.reply("🍽 Tushlik faqat 12:00–14:00 orasida qayd etiladi.");
     return;
   }
   const bugun = await bugungiDavomat(x.telegram_id);
-  if (!bugun?.keldi) { await ctx.reply('Avval "Keldim" qayd eting.'); return; }
-  if (bugun.tushlikka) { await ctx.reply("Tushlik allaqachon boshlangan."); return; }
+  if (!bugun?.keldi && !testRejimmi(x.telegram_id)) { await ctx.reply('Avval "Keldim" qayd eting.'); return; }
+  if (bugun?.tushlikka && !testRejimmi(x.telegram_id)) { await ctx.reply("Tushlik allaqachon boshlangan."); return; }
   const now = new Date();
   await supabase.from("davomat").update({ tushlikka: now.toISOString() })
     .eq("telegram_id", x.telegram_id).eq("sana", sanaTashkent());
@@ -494,8 +498,8 @@ bot.hears(TUGMA.tushlikdan, async (ctx) => {
   const x = await xodimByTgId(ctx.from!.id);
   if (!x) { await ctx.reply("Siz ro'yxatda yo'qsiz."); return; }
   const bugun = await bugungiDavomat(x.telegram_id);
-  if (!bugun?.tushlikka) { await ctx.reply('Avval "Tushlikka" bosing.'); return; }
-  if (bugun.qaytdi) { await ctx.reply("Tushlikdan allaqachon qaytilgan."); return; }
+  if (!bugun?.tushlikka && !testRejimmi(x.telegram_id)) { await ctx.reply('Avval "Tushlikka" bosing.'); return; }
+  if (bugun?.qaytdi && !testRejimmi(x.telegram_id)) { await ctx.reply("Tushlikdan allaqachon qaytilgan."); return; }
   const now = new Date();
   await supabase.from("davomat").update({ qaytdi: now.toISOString() })
     .eq("telegram_id", x.telegram_id).eq("sana", sanaTashkent());
@@ -706,8 +710,9 @@ bot.on("message:location", async (ctx) => {
     await ctx.reply("❌ Forward qilingan lokatsiya qabul qilinmaydi.", { reply_markup: anaMenu(x) });
     return;
   }
+  const test = testRejimmi(x.telegram_id);
   const yosh = Math.floor(Date.now() / 1000) - (ctx.message?.date ?? 0);
-  if (yosh > OFIS.maxYoshSek) {
+  if (yosh > OFIS.maxYoshSek && !test) {
     tozala(ctx);
     await ctx.reply("❌ Eski lokatsiya. Joriy lokatsiyani yuboring.", { reply_markup: anaMenu(x) });
     return;
@@ -715,7 +720,7 @@ bot.on("message:location", async (ctx) => {
   const loc = ctx.message?.location;
   if (!loc) return;
   const { ok, masofa, radius } = await ofisdaMi(loc.latitude, loc.longitude);
-  if (!ok) {
+  if (!ok && !test) {
     tozala(ctx);
     await ctx.reply(`❌ Siz ofisdan ${masofa} m uzoqdasiz (ruxsat: ${radius} m).`, { reply_markup: anaMenu(x) });
     return;
