@@ -128,6 +128,35 @@ function keldiHolat(d: Date): string {
   return kunMin(d) <= 9 * 60 ? "Vaqtida" : "Kech qoldi";
 }
 
+// Bugungi davomat hisoboti (barcha faol xodimlar bo'yicha)
+async function bugungiHisobot(): Promise<string> {
+  const sana = sanaTashkent();
+  // deno-lint-ignore no-explicit-any
+  const { data: xlar } = await supabase
+    .from("xodimlar").select("telegram_id, ism").eq("arxiv", false).order("ism") as { data: any[] | null };
+  // deno-lint-ignore no-explicit-any
+  const { data: dlar } = await supabase
+    .from("davomat").select("*").eq("sana", sana) as { data: any[] | null };
+  // deno-lint-ignore no-explicit-any
+  const map = new Map<number, any>((dlar ?? []).map((d) => [d.telegram_id, d]));
+  const qatorlar: string[] = [`📊 <b>Bugungi davomat</b> — ${sana}`, ""];
+  let kelgan = 0;
+  for (const x of xlar ?? []) {
+    const d = map.get(x.telegram_id);
+    if (d?.keldi) {
+      kelgan++;
+      const keldi = soatMatn(new Date(d.keldi));
+      const ketdi = d.ketdi ? soatMatn(new Date(d.ketdi)) : "—";
+      const soat = (d.sof_min / 60).toFixed(1);
+      qatorlar.push(`✅ ${x.ism}: ${keldi}–${ketdi} · ${soat}s · ${d.holat ?? ""}`);
+    } else {
+      qatorlar.push(`⬜ ${x.ism}: kelmadi`);
+    }
+  }
+  qatorlar.push("", `Jami: <b>${kelgan}/${(xlar ?? []).length}</b> keldi`);
+  return qatorlar.join("\n");
+}
+
 // ── Menyu ─────────────────────────────────────────────────
 const TUGMA = {
   keldi: "🟢 Keldim", ketdi: "🔴 Ketdim",
@@ -262,7 +291,14 @@ bot.hears(TUGMA.tushlikdan, async (ctx) => {
 });
 
 bot.hears(TUGMA.hisobot, async (ctx) => {
-  await ctx.reply("📊 Hisobotlar — FAZA 2 da qo'shiladi.");
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x) { await ctx.reply("Siz ro'yxatda yo'qsiz."); return; }
+  if (!rahbarmi(x.rol) && !superAdminmi(x.telegram_id)) {
+    await ctx.reply("Bu bo'lim faqat rahbarlar uchun.");
+    return;
+  }
+  const matn = await bugungiHisobot();
+  await ctx.reply(matn, { parse_mode: "HTML" });
 });
 bot.hears(TUGMA.xodimlar, async (ctx) => {
   await ctx.reply("👥 Xodim boshqaruvi — keyingi bosqichda qo'shiladi.");
