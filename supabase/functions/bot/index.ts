@@ -168,6 +168,19 @@ async function bugungiHisobot(): Promise<string> {
 }
 
 // Faol xodimlar ro'yxati
+// Oylik davomat: har xodim necha kun kelgan + jami soat
+async function oylikDavomatHisobot(): Promise<string> {
+  const oy = joriyOy();
+  // deno-lint-ignore no-explicit-any
+  const { data } = await supabase.rpc("oylik_davomat", { p_oy: oy }) as { data: any[] | null };
+  const qatorlar: string[] = [`📆 <b>Oylik davomat</b> — ${oy}`, ""];
+  for (const r of data ?? []) {
+    qatorlar.push(`• ${r.ism} (${r.rol}): <b>${r.kelgan_kun}</b> kun · ${r.jami_soat}s`);
+  }
+  if ((data ?? []).length === 0) qatorlar.push("(ma'lumot yo'q)");
+  return qatorlar.join("\n");
+}
+
 async function xodimlarRoyxati(): Promise<string> {
   // deno-lint-ignore no-explicit-any
   const { data } = await supabase
@@ -395,8 +408,22 @@ bot.hears(TUGMA.hisobot, async (ctx) => {
     return;
   }
   const matn = await bugungiHisobot();
+  const kb = new InlineKeyboard().text("📆 Oylik davomat", "hisobot_oy");
+  await ctx.reply(matn, { parse_mode: "HTML", reply_markup: kb });
+});
+
+// Oylik davomat (har xodim necha kun ishladi)
+bot.callbackQuery("hisobot_oy", async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || (!rahbarmi(x.rol) && !superAdminmi(x.telegram_id))) {
+    await ctx.answerCallbackQuery("Ruxsat yo'q");
+    return;
+  }
+  await ctx.answerCallbackQuery();
+  const matn = await oylikDavomatHisobot();
   await ctx.reply(matn, { parse_mode: "HTML" });
 });
+
 bot.hears(TUGMA.xodimlar, async (ctx) => {
   const x = await xodimByTgId(ctx.from!.id);
   if (!x || (!rahbarmi(x.rol) && !superAdminmi(x.telegram_id))) {
