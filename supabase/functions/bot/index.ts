@@ -7,6 +7,7 @@ import {
   webhookCallback,
   Keyboard,
   InlineKeyboard,
+  InputFile,
   type SessionFlavor,
 } from "npm:grammy@1.30.0";
 import { createClient } from "npm:@supabase/supabase-js@2.45.0";
@@ -198,6 +199,18 @@ async function maoshHisobot(): Promise<string> {
   }
   qatorlar.push("", `Jami to'lov: <b>${fmtSum(jami)}</b> so'm`);
   return qatorlar.join("\n");
+}
+
+// Oylik maosh CSV (Excel'da ochiladi)
+async function maoshCsv(): Promise<{ nom: string; matn: string }> {
+  const oy = joriyOy();
+  // deno-lint-ignore no-explicit-any
+  const { data } = await supabase.rpc("maosh_oylik", { p_oy: oy }) as { data: any[] | null };
+  let csv = "﻿" + "Ism,Rol,Soat,Baza,Bonus,Yakuniy\n";
+  for (const r of data ?? []) {
+    csv += `"${String(r.ism).replace(/"/g, '""')}",${r.rol},${r.jami_soat},${r.baza},${r.bonus},${r.yakuniy}\n`;
+  }
+  return { nom: `maosh_${oy}.csv`, matn: csv };
 }
 
 // Faol sinovchilar ro'yxati
@@ -440,7 +453,21 @@ bot.hears(TUGMA.maosh, async (ctx) => {
     return;
   }
   const matn = await maoshHisobot();
-  await ctx.reply(matn, { parse_mode: "HTML" });
+  const kb = new InlineKeyboard().text("📥 Eksport (CSV)", "maosh_export");
+  await ctx.reply(matn, { parse_mode: "HTML", reply_markup: kb });
+});
+
+// Maosh — CSV eksport
+bot.callbackQuery("maosh_export", async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || (!rahbarmi(x.rol) && !superAdminmi(x.telegram_id))) {
+    await ctx.answerCallbackQuery("Ruxsat yo'q");
+    return;
+  }
+  await ctx.answerCallbackQuery("Tayyorlanmoqda...");
+  const { nom, matn } = await maoshCsv();
+  const bytes = new TextEncoder().encode(matn);
+  await ctx.replyWithDocument(new InputFile(bytes, nom), { caption: "💰 Oylik maosh varaqasi" });
 });
 
 // Sinov — ro'yxat + qo'shish
