@@ -158,12 +158,13 @@ async function bugungiHisobot(): Promise<string> {
       const keldi = soatMatn(new Date(d.keldi));
       const ketdi = d.ketdi ? soatMatn(new Date(d.ketdi)) : "—";
       const soat = (d.sof_min / 60).toFixed(1);
-      qatorlar.push(`✅ ${esc(x.ism)}: ${keldi}–${ketdi} · ${soat}s · ${esc(d.holat ?? "")}`);
+      const rangi = d.holat === "Kech qoldi" ? "🟠" : d.holat === "Avtomatik" ? "🔵" : "🟢";
+      qatorlar.push(`${rangi} <b>${esc(x.ism)}</b> · ${keldi}–${ketdi} · <b>${soat}s</b>`);
     } else {
-      qatorlar.push(`⬜ ${esc(x.ism)}: kelmadi`);
+      qatorlar.push(`⬜ <b>${esc(x.ism)}</b> — kelmadi`);
     }
   }
-  qatorlar.push("", `Jami: <b>${kelgan}/${(xlar ?? []).length}</b> keldi`);
+  qatorlar.push("", `👥 Jami: <b>${kelgan}/${(xlar ?? []).length}</b> keldi`);
   return qatorlar.join("\n");
 }
 
@@ -175,7 +176,7 @@ async function oylikDavomatHisobot(): Promise<string> {
   const { data } = await supabase.rpc("oylik_davomat", { p_oy: oy }) as { data: any[] | null };
   const qatorlar: string[] = [`📆 <b>Oylik davomat</b> — ${oy}`, ""];
   for (const r of data ?? []) {
-    qatorlar.push(`• ${esc(r.ism)} (${esc(r.rol)}): <b>${r.kelgan_kun}</b> kun · ${r.jami_soat}s`);
+    qatorlar.push(`• <b>${esc(r.ism)}</b> (${esc(r.rol)}): <b>${r.kelgan_kun}</b> kun · ${r.jami_soat}s`);
   }
   if ((data ?? []).length === 0) qatorlar.push("(ma'lumot yo'q)");
   return qatorlar.join("\n");
@@ -186,7 +187,7 @@ async function xodimlarRoyxati(): Promise<string> {
   const { data } = await supabase
     .from("xodimlar").select("ism, rol").eq("arxiv", false).order("rol").order("ism") as { data: any[] | null };
   const qatorlar: string[] = ["👥 <b>Xodimlar</b>", ""];
-  for (const x of data ?? []) qatorlar.push(`• ${esc(x.ism)} — ${esc(x.rol)}`);
+  for (const x of data ?? []) qatorlar.push(`• <b>${esc(x.ism)}</b> — ${esc(x.rol)}`);
   qatorlar.push("", `Jami: <b>${(data ?? []).length}</b>`);
   return qatorlar.join("\n");
 }
@@ -208,7 +209,7 @@ async function maoshHisobot(): Promise<string> {
   for (const r of data ?? []) {
     jami += Number(r.yakuniy);
     const bonus = Number(r.bonus) > 0 ? ` (+${fmtSum(Number(r.bonus))} bonus)` : "";
-    qatorlar.push(`• ${esc(r.ism)} — <b>${fmtSum(Number(r.yakuniy))}</b> so'm${bonus} · ${r.jami_soat}s`);
+    qatorlar.push(`• <b>${esc(r.ism)}</b> — <b>${fmtSum(Number(r.yakuniy))}</b> so'm${bonus} · ${r.jami_soat}s`);
   }
   qatorlar.push("", `Jami to'lov: <b>${fmtSum(jami)}</b> so'm`);
   return qatorlar.join("\n");
@@ -234,7 +235,7 @@ async function sinovRoyxati(): Promise<string> {
   const qatorlar: string[] = ["🧪 <b>Sinovchilar</b>", ""];
   for (const s of data ?? []) {
     const natija = s.natija ?? "Kutilmoqda";
-    qatorlar.push(`• ${esc(s.ism)} — ${fmtSum(Number(s.summa_umumiy))} so'm · ${esc(s.bosqich)} · ${esc(natija)}`);
+    qatorlar.push(`• <b>${esc(s.ism)}</b> — ${fmtSum(Number(s.summa_umumiy))} so'm · ${esc(s.bosqich)} · ${esc(natija)}`);
   }
   if ((data ?? []).length === 0) qatorlar.push("(hozircha yo'q)");
   return qatorlar.join("\n");
@@ -409,7 +410,7 @@ bot.command("start", async (ctx) => {
   const rahbar = rahbarmi(x.rol);
   const rolTavsif = superAdmin ? "Super admin — to'liq access" : rahbar ? `${x.rol} (rahbar)` : x.rol;
   await ctx.reply(
-    `Assalomu alaykum, ${esc(x.ism)}! 👋\n\nRol: <b>${esc(rolTavsif)}</b>\n\nQuyidagi tugmalar orqali davomat qiling.`,
+    `Assalomu alaykum, <b>${esc(x.ism)}</b>! 👋\n\nRol: <b>${esc(rolTavsif)}</b>\n\nQuyidagi tugmalar orqali davomat qiling.`,
     { parse_mode: "HTML", reply_markup: menuForAccess(rahbar, superAdmin) },
   );
 });
@@ -458,7 +459,7 @@ bot.hears(TUGMA.tushlikka, async (ctx) => {
   const now = new Date();
   await supabase.from("davomat").update({ tushlikka: now.toISOString() })
     .eq("telegram_id", x.telegram_id).eq("sana", sanaTashkent());
-  await ctx.reply(`🍽 Tushlik boshlandi: ${soatMatn(now)}. Qaytganda "Tushlikdan keldim" bosing.`);
+  await ctx.reply(`🍽 Tushlik boshlandi: <b>${soatMatn(now)}</b>. Qaytganda "Tushlikdan keldim" bosing.`, { parse_mode: "HTML" });
 });
 
 bot.hears(TUGMA.tushlikdan, async (ctx) => {
@@ -470,7 +471,7 @@ bot.hears(TUGMA.tushlikdan, async (ctx) => {
   const now = new Date();
   await supabase.from("davomat").update({ qaytdi: now.toISOString() })
     .eq("telegram_id", x.telegram_id).eq("sana", sanaTashkent());
-  await ctx.reply(`↩️ Tushlikdan qaytdingiz: ${soatMatn(now)}.`);
+  await ctx.reply(`↩️ Tushlikdan qaytdingiz: <b>${soatMatn(now)}</b>.`, { parse_mode: "HTML" });
 });
 
 bot.hears(TUGMA.hisobot, async (ctx) => {
