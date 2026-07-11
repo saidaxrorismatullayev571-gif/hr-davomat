@@ -6,7 +6,14 @@ import {
   type SessionData,
 } from "./services/sessiya.js";
 import { handleStart } from "./handlers/start.js";
-import { DAVOMAT_HANDLERLAR } from "./handlers/davomat.js";
+import {
+  handleKeldi,
+  handleKetdi,
+  handleTushlikka,
+  handleTushlikdan,
+  handleLocation,
+  handleVideoNote,
+} from "./handlers/davomat.js";
 import { superAdminmi } from "./services/xodim.js";
 import { TUGMA } from "./utils/menu.js";
 
@@ -36,16 +43,17 @@ export function createBot(): Bot<BotContext> {
   bot.command("start", handleStart);
 
   // ── Davomat tugmalari ─────────────────────────────────────
-  for (const [matn, handler] of DAVOMAT_HANDLERLAR) {
-    bot.hears(matn, handler);
-  }
+  bot.hears(TUGMA.keldi, handleKeldi);
+  bot.hears(TUGMA.ketdi, handleKetdi);
+  bot.hears(TUGMA.tushlikka, handleTushlikka);
+  bot.hears(TUGMA.tushlikdan, handleTushlikdan);
 
   // ── Rahbar tugmalari (SKELET — FAZA 2 da to'ldiriladi) ────
   bot.hears(TUGMA.hisobot, async (ctx) => {
     await ctx.reply("📊 Hisobotlar — FAZA 2 da qo'shiladi.");
   });
   bot.hears(TUGMA.xodimlar, async (ctx) => {
-    await ctx.reply("👥 Xodim boshqaruvi — FAZA 1 keyingi bosqichда qo'shiladi.");
+    await ctx.reply("👥 Xodim boshqaruvi — keyingi bosqichда qo'shiladi.");
   });
 
   // ── Super admin paneli (SKELET) ───────────────────────────
@@ -54,6 +62,11 @@ export function createBot(): Bot<BotContext> {
     if (!tgId || !superAdminmi(tgId)) return;
     await ctx.reply("⚙️ Super admin panel — to'liq access. Funksiyalar keyingi bosqichда.");
   });
+
+  // ── Davomat oqimi: lokatsiya → dumaloq video ──────────────
+  // (catch-all'дан OLDIN turishi shart)
+  bot.on("message:location", handleLocation);
+  bot.on("message:video_note", handleVideoNote);
 
   // ── Boshqa har qanday xabar ───────────────────────────────
   bot.on("message", async (ctx) => {

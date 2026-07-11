@@ -7,10 +7,14 @@ import type { Json } from "../db/types.js";
  * Supabase `bot_sessiya` jadvaliga yoziladi (server qayta ishga tushsa yo'qolmaydi).
  */
 export interface SessionData {
-  /** Ko'p bosqichli oqim uchun joriy qadam (masalan davomat lokatsiya kutish). */
-  step?: string;
-  /** Oqimga oid vaqtinchalik ma'lumot. */
-  [key: string]: unknown;
+  /** Davomat oqimida joriy qadam. */
+  step?: "lokatsiya" | "video";
+  /** Qaysi davomat amali: kelish yoki ketish. */
+  davomatFlow?: "keldi" | "ketdi";
+  /** Tasdiqlangan lokatsiya (video bosqichiga o'tishda saqlanadi). */
+  lat?: number;
+  lng?: number;
+  masofa?: number;
 }
 
 export function initialSession(): SessionData {
