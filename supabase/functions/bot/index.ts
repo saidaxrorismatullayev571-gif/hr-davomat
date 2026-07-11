@@ -12,6 +12,7 @@ import {
 } from "npm:grammy@1.30.0";
 import { createClient } from "npm:@supabase/supabase-js@2.45.0";
 import { davomatPng, maoshPng, type DavomatRow, type MaoshRow } from "./render.ts";
+import { davomatXlsx, maoshXlsx, type DavomatXRow, type MaoshXRow } from "./excel.ts";
 
 // ── Konfiguratsiya ────────────────────────────────────────
 const BOT_TOKEN = Deno.env.get("BOT_TOKEN") ??
@@ -509,7 +510,7 @@ bot.hears(TUGMA.hisobot, async (ctx) => {
     return;
   }
   const matn = await bugungiHisobot();
-  const kb = new InlineKeyboard().text("📆 Oylik davomat", "hisobot_oy");
+  const kb = new InlineKeyboard().text("📆 Oylik davomat", "hisobot_oy").text("📥 Excel", "davomat_export");
   await ctx.reply(matn, { parse_mode: "HTML", reply_markup: kb });
   try {
     const png = await davomatPng(sanaTashkent(), await davomatRows());
@@ -546,6 +547,24 @@ bot.callbackQuery("hisobot_oy", async (ctx) => {
     options: { title: { display: true, text: `Oylik ish soati — ${oy}`, fontSize: 18 }, legend: { display: false } },
   });
   if (url) await ctx.replyWithPhoto(url);
+});
+
+// Davomat — Excel eksport
+bot.callbackQuery("davomat_export", async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || (!rahbarmi(x.rol) && !superAdminmi(x.telegram_id))) {
+    await ctx.answerCallbackQuery("Ruxsat yo'q");
+    return;
+  }
+  await ctx.answerCallbackQuery("Tayyorlanmoqda...");
+  try {
+    const sana = sanaTashkent();
+    const xlsx = await davomatXlsx(sana, (await davomatRows()) as DavomatXRow[]);
+    await ctx.replyWithDocument(new InputFile(xlsx, `davomat_${sana}.xlsx`), { caption: "📊 Bugungi davomat (Excel)" });
+  } catch (e) {
+    console.error("davomat xlsx:", e);
+    await ctx.reply("❌ Excel yaratishda xato.");
+  }
 });
 
 bot.hears(TUGMA.xodimlar, async (ctx) => {
@@ -634,9 +653,17 @@ bot.callbackQuery("maosh_export", async (ctx) => {
     return;
   }
   await ctx.answerCallbackQuery("Tayyorlanmoqda...");
-  const { nom, matn } = await maoshCsv();
-  const bytes = new TextEncoder().encode(matn);
-  await ctx.replyWithDocument(new InputFile(bytes, nom), { caption: "💰 Oylik maosh varaqasi" });
+  try {
+    const oy = joriyOy();
+    // deno-lint-ignore no-explicit-any
+    const { data } = await supabase.rpc("maosh_oylik", { p_oy: oy }) as { data: any[] | null };
+    const xlsx = await maoshXlsx(oy, (data ?? []) as MaoshXRow[]);
+    await ctx.replyWithDocument(new InputFile(xlsx, `maosh_${oy}.xlsx`), { caption: "💰 Oylik maosh varaqasi (Excel)" });
+  } catch (e) {
+    console.error("maosh xlsx:", e);
+    const { nom, matn } = await maoshCsv();
+    await ctx.replyWithDocument(new InputFile(new TextEncoder().encode(matn), nom), { caption: "💰 Oylik maosh (CSV)" });
+  }
 });
 
 // Sinov — ro'yxat + qo'shish
