@@ -11,7 +11,7 @@ import {
   type SessionFlavor,
 } from "npm:grammy@1.30.0";
 import { createClient } from "npm:@supabase/supabase-js@2.45.0";
-import { davomatPng, type DavomatRow } from "./render.ts";
+import { davomatPng, maoshPng, type DavomatRow, type MaoshRow } from "./render.ts";
 
 // ── Konfiguratsiya ────────────────────────────────────────
 const BOT_TOKEN = Deno.env.get("BOT_TOKEN") ??
@@ -616,15 +616,14 @@ bot.hears(TUGMA.maosh, async (ctx) => {
   qatorlar.push("", `Jami to'lov: <b>${fmtSum(jami)}</b> so'm`);
   const kb = new InlineKeyboard().text("📥 Eksport (CSV)", "maosh_export");
   await ctx.reply(qatorlar.join("\n"), { parse_mode: "HTML", reply_markup: kb });
-  const url = await chartUrl({
-    type: "horizontalBar",
-    data: {
-      labels: (data ?? []).map((r) => r.ism),
-      datasets: [{ label: "Maosh (so'm)", data: (data ?? []).map((r) => Number(r.yakuniy)), backgroundColor: "#59a14f" }],
-    },
-    options: { title: { display: true, text: `Oylik maosh — ${oy}`, fontSize: 18 }, legend: { display: false } },
-  });
-  if (url) await ctx.replyWithPhoto(url);
+  try {
+    const png = await maoshPng(oy, (data ?? []) as MaoshRow[]);
+    await ctx.replyWithPhoto(new InputFile(png, "maosh.png"));
+  } catch (e) {
+    console.error("maosh png:", e);
+    const u = await maoshBarUrl();
+    if (u) await ctx.replyWithPhoto(u);
+  }
 });
 
 // Maosh — CSV eksport
@@ -811,8 +810,13 @@ bot.on("message:voice", async (ctx) => {
       if (u) await ctx.replyWithPhoto(u);
     } else if (kat.includes("maosh")) {
       await ctx.reply(await maoshHisobot(), { parse_mode: "HTML" });
-      const u = await maoshBarUrl();
-      if (u) await ctx.replyWithPhoto(u);
+      try {
+        const oy = joriyOy();
+        // deno-lint-ignore no-explicit-any
+        const { data: md } = await supabase.rpc("maosh_oylik", { p_oy: oy }) as { data: any[] | null };
+        const png = await maoshPng(oy, (md ?? []) as MaoshRow[]);
+        await ctx.replyWithPhoto(new InputFile(png, "maosh.png"));
+      } catch (e) { console.error("voice maosh png:", e); const u = await maoshBarUrl(); if (u) await ctx.replyWithPhoto(u); }
     } else if (kat.includes("xodim")) {
       await ctx.reply(await xodimlarRoyxati(), { parse_mode: "HTML" });
     } else {
@@ -934,6 +938,21 @@ Deno.serve(async (req) => {
       const png = await davomatPng(sanaTashkent(), await davomatRows());
       const { error } = await supabase.storage.from("debug")
         .upload("davomat.png", png, { contentType: "image/png", upsert: true });
+      return new Response(JSON.stringify({ ok: !error, bytes: png.length, err: error?.message ?? null }),
+        { headers: { "content-type": "application/json" } });
+    } catch (e) {
+      return new Response(JSON.stringify({ ok: false, err: String(e) }),
+        { status: 500, headers: { "content-type": "application/json" } });
+    }
+  }
+  if (req.method === "GET" && url.searchParams.get("test") === "maosh") {
+    try {
+      const oy = joriyOy();
+      // deno-lint-ignore no-explicit-any
+      const { data } = await supabase.rpc("maosh_oylik", { p_oy: oy }) as { data: any[] | null };
+      const png = await maoshPng(oy, (data ?? []) as MaoshRow[]);
+      const { error } = await supabase.storage.from("debug")
+        .upload("maosh.png", png, { contentType: "image/png", upsert: true });
       return new Response(JSON.stringify({ ok: !error, bytes: png.length, err: error?.message ?? null }),
         { headers: { "content-type": "application/json" } });
     } catch (e) {
