@@ -803,8 +803,8 @@ bot.on("message:voice", async (ctx) => {
 
     if (kat.includes("bugun")) {
       await ctx.reply(await bugungiHisobot(), { parse_mode: "HTML" });
-      const u = await bugunDoughnutUrl();
-      if (u) await ctx.replyWithPhoto(u);
+      try { const png = await davomatPng(sanaTashkent(), await davomatRows()); await ctx.replyWithPhoto(new InputFile(png, "davomat.png")); }
+      catch (e) { console.error("voice png:", e); const u = await bugunDoughnutUrl(); if (u) await ctx.replyWithPhoto(u); }
     } else if (kat.includes("oylik")) {
       await ctx.reply(await oylikDavomatHisobot(), { parse_mode: "HTML" });
       const u = await oylikBarUrl();

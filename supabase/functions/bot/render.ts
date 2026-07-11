@@ -40,9 +40,10 @@ async function toPng(markup: string, width: number, height: number): Promise<Uin
       { name: "Noto Sans", data: fontBold!, weight: 700, style: "normal" },
     ],
   });
+  // 1x render (edge CPU/xotira chegarasi uchun) — Telegram'da baribir tiniq
   const png = new Resvg(svg, {
     background: "#E7EFF8",
-    fitTo: { mode: "width", value: width * 2 },
+    fitTo: { mode: "width", value: width },
   }).render().asPng();
   return png;
 }
