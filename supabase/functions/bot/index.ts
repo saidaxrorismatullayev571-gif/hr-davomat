@@ -40,6 +40,10 @@ interface SessionData {
   xodimStep?: "ism" | "tgid";
   yangiIsm?: string;
   yangiTgId?: number;
+  // Sinovchi qo'shish oqimi
+  sinovStep?: "ism" | "tgid" | "summa";
+  sinovIsm?: string;
+  sinovTgId?: number;
 }
 type Ctx = Context & SessionFlavor<SessionData>;
 
@@ -173,19 +177,65 @@ async function xodimlarRoyxati(): Promise<string> {
   return qatorlar.join("\n");
 }
 
+// Joriy oy (YYYY-MM, Asia/Tashkent)
+function joriyOy(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ, year: "numeric", month: "2-digit",
+  }).format(new Date()).slice(0, 7);
+}
+
+// Oylik maosh hisoboti
+async function maoshHisobot(): Promise<string> {
+  const oy = joriyOy();
+  // deno-lint-ignore no-explicit-any
+  const { data } = await supabase.rpc("maosh_oylik", { p_oy: oy }) as { data: any[] | null };
+  const qatorlar: string[] = [`💰 <b>Oylik maosh</b> — ${oy}`, ""];
+  let jami = 0;
+  for (const r of data ?? []) {
+    jami += Number(r.yakuniy);
+    const bonus = Number(r.bonus) > 0 ? ` (+${fmtSum(Number(r.bonus))} bonus)` : "";
+    qatorlar.push(`• ${r.ism} — <b>${fmtSum(Number(r.yakuniy))}</b> so'm${bonus} · ${r.jami_soat}s`);
+  }
+  qatorlar.push("", `Jami to'lov: <b>${fmtSum(jami)}</b> so'm`);
+  return qatorlar.join("\n");
+}
+
+// Faol sinovchilar ro'yxati
+async function sinovRoyxati(): Promise<string> {
+  // deno-lint-ignore no-explicit-any
+  const { data } = await supabase
+    .from("sinov").select("*").eq("arxiv", false).order("boshlanish", { ascending: false }) as { data: any[] | null };
+  const qatorlar: string[] = ["🧪 <b>Sinovchilar</b>", ""];
+  for (const s of data ?? []) {
+    const natija = s.natija ?? "Kutilmoqda";
+    qatorlar.push(`• ${s.ism} — ${fmtSum(Number(s.summa_umumiy))} so'm · ${s.bosqich} · ${natija}`);
+  }
+  if ((data ?? []).length === 0) qatorlar.push("(hozircha yo'q)");
+  return qatorlar.join("\n");
+}
+
 // ── Menyu ─────────────────────────────────────────────────
 const TUGMA = {
   keldi: "🟢 Keldim", ketdi: "🔴 Ketdim",
   tushlikka: "🍽 Tushlikka", tushlikdan: "↩️ Tushlikdan keldim",
-  hisobot: "📊 Hisobotlar", xodimlar: "👥 Xodimlar", admin: "⚙️ Super admin",
+  hisobot: "📊 Hisobotlar", xodimlar: "👥 Xodimlar",
+  maosh: "💰 Maosh", sinov: "🧪 Sinov", admin: "⚙️ Super admin",
 };
 function menuForAccess(rahbar: boolean, superAdmin: boolean): Keyboard {
   const kb = new Keyboard()
     .text(TUGMA.keldi).text(TUGMA.ketdi).row()
     .text(TUGMA.tushlikka).text(TUGMA.tushlikdan).row();
-  if (rahbar || superAdmin) kb.text(TUGMA.hisobot).text(TUGMA.xodimlar).row();
+  if (rahbar || superAdmin) {
+    kb.text(TUGMA.hisobot).text(TUGMA.xodimlar).row();
+    kb.text(TUGMA.maosh).text(TUGMA.sinov).row();
+  }
   if (superAdmin) kb.text(TUGMA.admin).row();
   return kb.resized().persistent();
+}
+
+// Raqamni ming ajratgichli formatlash: 1500000 -> "1 500 000"
+function fmtSum(n: number): string {
+  return Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ");
 }
 // deno-lint-ignore no-explicit-any
 function anaMenu(x: any): Keyboard {
@@ -382,6 +432,42 @@ bot.callbackQuery(/^xq_rol_(.+)$/, async (ctx) => {
   }
   await ctx.reply(`✅ Qo'shildi: <b>${ism}</b> — ${rol} (ID ${tgid})`, { parse_mode: "HTML" });
 });
+// Maosh — oylik hisobot
+bot.hears(TUGMA.maosh, async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || (!rahbarmi(x.rol) && !superAdminmi(x.telegram_id))) {
+    await ctx.reply("Bu bo'lim faqat rahbarlar uchun.");
+    return;
+  }
+  const matn = await maoshHisobot();
+  await ctx.reply(matn, { parse_mode: "HTML" });
+});
+
+// Sinov — ro'yxat + qo'shish
+bot.hears(TUGMA.sinov, async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || (!rahbarmi(x.rol) && !superAdminmi(x.telegram_id))) {
+    await ctx.reply("Bu bo'lim faqat rahbarlar uchun.");
+    return;
+  }
+  const matn = await sinovRoyxati();
+  const kb = new InlineKeyboard().text("➕ Sinovchi qo'shish", "sinov_add");
+  await ctx.reply(matn, { parse_mode: "HTML", reply_markup: kb });
+});
+
+bot.callbackQuery("sinov_add", async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || (!rahbarmi(x.rol) && !superAdminmi(x.telegram_id))) {
+    await ctx.answerCallbackQuery("Ruxsat yo'q");
+    return;
+  }
+  ctx.session.sinovStep = "ism";
+  ctx.session.sinovIsm = undefined;
+  ctx.session.sinovTgId = undefined;
+  await ctx.answerCallbackQuery();
+  await ctx.reply("Sinovchi ismini kiriting:");
+});
+
 bot.hears(TUGMA.admin, async (ctx) => {
   if (!superAdminmi(ctx.from!.id)) return;
   await ctx.reply("⚙️ Super admin panel — to'liq access. Funksiyalar keyingi bosqichda.");
@@ -483,6 +569,60 @@ bot.on("message", async (ctx) => {
       return;
     }
   }
+
+  // Sinovchi qo'shish oqimi
+  if (ctx.session.sinovStep && t) {
+    if (ctx.session.sinovStep === "ism") {
+      ctx.session.sinovIsm = t;
+      ctx.session.sinovStep = "tgid";
+      await ctx.reply(`Ism: <b>${t}</b>\nEndi sinovchining Telegram ID (raqam) ni kiriting.`, { parse_mode: "HTML" });
+      return;
+    }
+    if (ctx.session.sinovStep === "tgid") {
+      const id = Number(t);
+      if (!Number.isInteger(id) || id <= 0) {
+        await ctx.reply("❌ Noto'g'ri ID. Faqat raqam kiriting.");
+        return;
+      }
+      ctx.session.sinovTgId = id;
+      ctx.session.sinovStep = "summa";
+      await ctx.reply("Butun sinov davri uchun umumiy summa (so'm) ni kiriting (masalan 400000):");
+      return;
+    }
+    if (ctx.session.sinovStep === "summa") {
+      const summa = Number(t.replace(/\s/g, ""));
+      if (!Number.isInteger(summa) || summa < 0) {
+        await ctx.reply("❌ Noto'g'ri summa. Faqat raqam kiriting (masalan 400000).");
+        return;
+      }
+      const boshlanish = sanaTashkent();
+      const tm = new Date();
+      tm.setDate(tm.getDate() + 18); // Adaptatsiya (3) + Sinov+Imtihon (15)
+      const tugashMax = sanaTashkent(tm);
+      const { error } = await supabase.from("sinov").insert({
+        telegram_id: ctx.session.sinovTgId,
+        ism: ctx.session.sinovIsm,
+        boshlanish,
+        tugash_max: tugashMax,
+        summa_umumiy: summa,
+        bosqich: "Adaptatsiya",
+      });
+      const ism = ctx.session.sinovIsm;
+      ctx.session.sinovStep = undefined;
+      ctx.session.sinovIsm = undefined;
+      ctx.session.sinovTgId = undefined;
+      if (error) {
+        await ctx.reply("❌ Xato: " + error.message);
+        return;
+      }
+      await ctx.reply(
+        `✅ Sinovchi qo'shildi: <b>${ism}</b>\nSumma: ${fmtSum(summa)} so'm\nMuddat: ${boshlanish} → ${tugashMax}\nBosqich: Adaptatsiya`,
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+  }
+
   await ctx.reply("Menyudan tugmani tanlang yoki /start bosing.");
 });
 
