@@ -11,6 +11,7 @@ import {
   type SessionFlavor,
 } from "npm:grammy@1.30.0";
 import { createClient } from "npm:@supabase/supabase-js@2.45.0";
+import { davomatPng, type DavomatRow } from "./render.ts";
 
 // ── Konfiguratsiya ────────────────────────────────────────
 const BOT_TOKEN = Deno.env.get("BOT_TOKEN") ??
@@ -166,6 +167,32 @@ async function bugungiHisobot(): Promise<string> {
   }
   qatorlar.push("", `👥 Jami: <b>${kelgan}/${(xlar ?? []).length}</b> keldi`);
   return qatorlar.join("\n");
+}
+
+// Bugungi davomat qatorlari (matn hisobot + PNG dashboard uchun umumiy)
+async function davomatRows(): Promise<DavomatRow[]> {
+  const sana = sanaTashkent();
+  // deno-lint-ignore no-explicit-any
+  const { data: xlar } = await supabase
+    .from("xodimlar").select("telegram_id, ism").eq("arxiv", false).order("ism") as { data: any[] | null };
+  // deno-lint-ignore no-explicit-any
+  const { data: dlar } = await supabase
+    .from("davomat").select("*").eq("sana", sana) as { data: any[] | null };
+  // deno-lint-ignore no-explicit-any
+  const map = new Map<number, any>((dlar ?? []).map((d) => [d.telegram_id, d]));
+  return (xlar ?? []).map((x) => {
+    const d = map.get(x.telegram_id);
+    if (d?.keldi) {
+      return {
+        ism: x.ism,
+        keldi: soatMatn(new Date(d.keldi)),
+        ketdi: d.ketdi ? soatMatn(new Date(d.ketdi)) : "—",
+        soat: Number((d.sof_min / 60).toFixed(1)),
+        holat: d.holat ?? "Vaqtida",
+      };
+    }
+    return { ism: x.ism, keldi: "—", ketdi: "—", soat: null, holat: null };
+  });
 }
 
 // Faol xodimlar ro'yxati
@@ -484,20 +511,14 @@ bot.hears(TUGMA.hisobot, async (ctx) => {
   const matn = await bugungiHisobot();
   const kb = new InlineKeyboard().text("📆 Oylik davomat", "hisobot_oy");
   await ctx.reply(matn, { parse_mode: "HTML", reply_markup: kb });
-  // Vizual: keldi/kelmadi doughnut
-  // deno-lint-ignore no-explicit-any
-  const { data: xl } = await supabase.from("xodimlar").select("telegram_id").eq("arxiv", false) as { data: any[] | null };
-  // deno-lint-ignore no-explicit-any
-  const { data: dl } = await supabase.from("davomat").select("telegram_id, keldi").eq("sana", sanaTashkent()) as { data: any[] | null };
-  const kelganSet = new Set((dl ?? []).filter((d) => d.keldi).map((d) => d.telegram_id));
-  const kelgan = (xl ?? []).filter((x) => kelganSet.has(x.telegram_id)).length;
-  const kelmagan = (xl ?? []).length - kelgan;
-  const url = await chartUrl({
-    type: "doughnut",
-    data: { labels: ["Keldi", "Kelmadi"], datasets: [{ data: [kelgan, kelmagan], backgroundColor: ["#59a14f", "#e15759"] }] },
-    options: { title: { display: true, text: `Bugungi davomat — ${sanaTashkent()}`, fontSize: 18 } },
-  });
-  if (url) await ctx.replyWithPhoto(url);
+  try {
+    const png = await davomatPng(sanaTashkent(), await davomatRows());
+    await ctx.replyWithPhoto(new InputFile(png, "davomat.png"));
+  } catch (e) {
+    console.error("davomat png:", e);
+    const u = await bugunDoughnutUrl();
+    if (u) await ctx.replyWithPhoto(u);
+  }
 });
 
 // Oylik davomat (har xodim necha kun ishladi)
@@ -904,6 +925,20 @@ Deno.serve(async (req) => {
     } catch (e) {
       console.error("handleUpdate:", e);
       return new Response("ok", { status: 200 });
+    }
+  }
+  // Debug: render testi (Telegram'siz tekshirish uchun) — Storage'ga yuklaydi
+  const url = new URL(req.url);
+  if (req.method === "GET" && url.searchParams.get("test") === "davomat") {
+    try {
+      const png = await davomatPng(sanaTashkent(), await davomatRows());
+      const { error } = await supabase.storage.from("debug")
+        .upload("davomat.png", png, { contentType: "image/png", upsert: true });
+      return new Response(JSON.stringify({ ok: !error, bytes: png.length, err: error?.message ?? null }),
+        { headers: { "content-type": "application/json" } });
+    } catch (e) {
+      return new Response(JSON.stringify({ ok: false, err: String(e) }),
+        { status: 500, headers: { "content-type": "application/json" } });
     }
   }
   return new Response("iMed HR bot webhook ishlayapti", { status: 200 });
