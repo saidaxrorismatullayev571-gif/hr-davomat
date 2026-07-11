@@ -158,9 +158,9 @@ async function bugungiHisobot(): Promise<string> {
       const keldi = soatMatn(new Date(d.keldi));
       const ketdi = d.ketdi ? soatMatn(new Date(d.ketdi)) : "—";
       const soat = (d.sof_min / 60).toFixed(1);
-      qatorlar.push(`✅ ${x.ism}: ${keldi}–${ketdi} · ${soat}s · ${d.holat ?? ""}`);
+      qatorlar.push(`✅ ${esc(x.ism)}: ${keldi}–${ketdi} · ${soat}s · ${esc(d.holat ?? "")}`);
     } else {
-      qatorlar.push(`⬜ ${x.ism}: kelmadi`);
+      qatorlar.push(`⬜ ${esc(x.ism)}: kelmadi`);
     }
   }
   qatorlar.push("", `Jami: <b>${kelgan}/${(xlar ?? []).length}</b> keldi`);
@@ -175,7 +175,7 @@ async function oylikDavomatHisobot(): Promise<string> {
   const { data } = await supabase.rpc("oylik_davomat", { p_oy: oy }) as { data: any[] | null };
   const qatorlar: string[] = [`📆 <b>Oylik davomat</b> — ${oy}`, ""];
   for (const r of data ?? []) {
-    qatorlar.push(`• ${r.ism} (${r.rol}): <b>${r.kelgan_kun}</b> kun · ${r.jami_soat}s`);
+    qatorlar.push(`• ${esc(r.ism)} (${esc(r.rol)}): <b>${r.kelgan_kun}</b> kun · ${r.jami_soat}s`);
   }
   if ((data ?? []).length === 0) qatorlar.push("(ma'lumot yo'q)");
   return qatorlar.join("\n");
@@ -186,7 +186,7 @@ async function xodimlarRoyxati(): Promise<string> {
   const { data } = await supabase
     .from("xodimlar").select("ism, rol").eq("arxiv", false).order("rol").order("ism") as { data: any[] | null };
   const qatorlar: string[] = ["👥 <b>Xodimlar</b>", ""];
-  for (const x of data ?? []) qatorlar.push(`• ${x.ism} — ${x.rol}`);
+  for (const x of data ?? []) qatorlar.push(`• ${esc(x.ism)} — ${esc(x.rol)}`);
   qatorlar.push("", `Jami: <b>${(data ?? []).length}</b>`);
   return qatorlar.join("\n");
 }
@@ -208,7 +208,7 @@ async function maoshHisobot(): Promise<string> {
   for (const r of data ?? []) {
     jami += Number(r.yakuniy);
     const bonus = Number(r.bonus) > 0 ? ` (+${fmtSum(Number(r.bonus))} bonus)` : "";
-    qatorlar.push(`• ${r.ism} — <b>${fmtSum(Number(r.yakuniy))}</b> so'm${bonus} · ${r.jami_soat}s`);
+    qatorlar.push(`• ${esc(r.ism)} — <b>${fmtSum(Number(r.yakuniy))}</b> so'm${bonus} · ${r.jami_soat}s`);
   }
   qatorlar.push("", `Jami to'lov: <b>${fmtSum(jami)}</b> so'm`);
   return qatorlar.join("\n");
@@ -234,7 +234,7 @@ async function sinovRoyxati(): Promise<string> {
   const qatorlar: string[] = ["🧪 <b>Sinovchilar</b>", ""];
   for (const s of data ?? []) {
     const natija = s.natija ?? "Kutilmoqda";
-    qatorlar.push(`• ${s.ism} — ${fmtSum(Number(s.summa_umumiy))} so'm · ${s.bosqich} · ${natija}`);
+    qatorlar.push(`• ${esc(s.ism)} — ${fmtSum(Number(s.summa_umumiy))} so'm · ${esc(s.bosqich)} · ${esc(natija)}`);
   }
   if ((data ?? []).length === 0) qatorlar.push("(hozircha yo'q)");
   return qatorlar.join("\n");
@@ -262,6 +262,11 @@ function menuForAccess(rahbar: boolean, superAdmin: boolean): Keyboard {
 // Raqamni ming ajratgichli formatlash: 1500000 -> "1 500 000"
 function fmtSum(n: number): string {
   return Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+}
+
+// HTML parse_mode uchun xavfsizlash (ism/matnda &, <, > bo'lsa xabar buzilmasin)
+function esc(s: unknown): string {
+  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 // QuickChart orqali grafik rasm URL (bepul, kalitsiz)
@@ -397,7 +402,7 @@ bot.command("start", async (ctx) => {
   const rahbar = rahbarmi(x.rol);
   const rolTavsif = superAdmin ? "Super admin — to'liq access" : rahbar ? `${x.rol} (rahbar)` : x.rol;
   await ctx.reply(
-    `Assalomu alaykum, ${x.ism}! 👋\n\nRol: <b>${rolTavsif}</b>\n\nQuyidagi tugmalar orqali davomat qiling.`,
+    `Assalomu alaykum, ${esc(x.ism)}! 👋\n\nRol: <b>${esc(rolTavsif)}</b>\n\nQuyidagi tugmalar orqali davomat qiling.`,
     { parse_mode: "HTML", reply_markup: menuForAccess(rahbar, superAdmin) },
   );
 });
@@ -500,7 +505,7 @@ bot.callbackQuery("hisobot_oy", async (ctx) => {
   const { data } = await supabase.rpc("oylik_davomat", { p_oy: oy }) as { data: any[] | null };
   const qatorlar: string[] = [`📆 <b>Oylik davomat</b> — ${oy}`, ""];
   for (const r of data ?? []) {
-    qatorlar.push(`• ${r.ism} (${r.rol}): <b>${r.kelgan_kun}</b> kun · ${r.jami_soat}s`);
+    qatorlar.push(`• ${esc(r.ism)} (${esc(r.rol)}): <b>${r.kelgan_kun}</b> kun · ${r.jami_soat}s`);
   }
   await ctx.reply(qatorlar.join("\n"), { parse_mode: "HTML" });
   const url = await chartUrl({
@@ -560,7 +565,7 @@ bot.callbackQuery(/^xq_rol_(.+)$/, async (ctx) => {
     await ctx.reply("❌ Xato: " + error.message);
     return;
   }
-  await ctx.reply(`✅ Qo'shildi: <b>${ism}</b> — ${rol} (ID ${tgid})`, { parse_mode: "HTML" });
+  await ctx.reply(`✅ Qo'shildi: <b>${esc(ism)}</b> — ${esc(rol)} (ID ${tgid})`, { parse_mode: "HTML" });
 });
 // Maosh — oylik hisobot
 bot.hears(TUGMA.maosh, async (ctx) => {
@@ -577,7 +582,7 @@ bot.hears(TUGMA.maosh, async (ctx) => {
   for (const r of data ?? []) {
     jami += Number(r.yakuniy);
     const bonus = Number(r.bonus) > 0 ? ` (+${fmtSum(Number(r.bonus))} bonus)` : "";
-    qatorlar.push(`• ${r.ism} — <b>${fmtSum(Number(r.yakuniy))}</b> so'm${bonus} · ${r.jami_soat}s`);
+    qatorlar.push(`• ${esc(r.ism)} — <b>${fmtSum(Number(r.yakuniy))}</b> so'm${bonus} · ${r.jami_soat}s`);
   }
   qatorlar.push("", `Jami to'lov: <b>${fmtSum(jami)}</b> so'm`);
   const kb = new InlineKeyboard().text("📥 Eksport (CSV)", "maosh_export");
@@ -731,7 +736,7 @@ bot.on("message:voice", async (ctx) => {
     const wJson = await wResp.json() as any;
     const savol = String(wJson.text ?? "").trim();
     if (!savol) { await ctx.reply("Ovozni tushunolmadim. Qayta urinib ko'ring."); return; }
-    await ctx.reply(`🗣 Savol: <i>${savol}</i>`, { parse_mode: "HTML" });
+    await ctx.reply(`🗣 Savol: <i>${esc(savol)}</i>`, { parse_mode: "HTML" });
 
     const cResp = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -782,7 +787,7 @@ bot.on("message", async (ctx) => {
       ctx.session.yangiIsm = t;
       ctx.session.xodimStep = "tgid";
       await ctx.reply(
-        `Ism: <b>${t}</b>\nEndi xodimning Telegram ID (raqam) ni kiriting.\n\n` +
+        `Ism: <b>${esc(t)}</b>\nEndi xodimning Telegram ID (raqam) ni kiriting.\n\n` +
           "(Xodim botga /start yozsa, o'z ID sini ko'radi — o'shani so'rang.)",
         { parse_mode: "HTML" },
       );
@@ -810,7 +815,7 @@ bot.on("message", async (ctx) => {
     if (ctx.session.sinovStep === "ism") {
       ctx.session.sinovIsm = t;
       ctx.session.sinovStep = "tgid";
-      await ctx.reply(`Ism: <b>${t}</b>\nEndi sinovchining Telegram ID (raqam) ni kiriting.`, { parse_mode: "HTML" });
+      await ctx.reply(`Ism: <b>${esc(t)}</b>\nEndi sinovchining Telegram ID (raqam) ni kiriting.`, { parse_mode: "HTML" });
       return;
     }
     if (ctx.session.sinovStep === "tgid") {
@@ -851,7 +856,7 @@ bot.on("message", async (ctx) => {
         return;
       }
       await ctx.reply(
-        `✅ Sinovchi qo'shildi: <b>${ism}</b>\nSumma: ${fmtSum(summa)} so'm\nMuddat: ${boshlanish} → ${tugashMax}\nBosqich: Adaptatsiya`,
+        `✅ Sinovchi qo'shildi: <b>${esc(ism)}</b>\nSumma: ${fmtSum(summa)} so'm\nMuddat: ${boshlanish} → ${tugashMax}\nBosqich: Adaptatsiya`,
         { parse_mode: "HTML" },
       );
       return;
