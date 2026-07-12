@@ -40,7 +40,7 @@ interface SessionData {
   lng?: number;
   masofa?: number;
   // Xodim qo'shish oqimi
-  xodimStep?: "ism" | "tgid";
+  xodimStep?: "ism" | "tgid" | "yangirol";
   yangiIsm?: string;
   yangiTgId?: number;
   // Sinovchi qo'shish oqimi
@@ -222,6 +222,28 @@ async function xodimlarRoyxati(): Promise<string> {
   for (const x of data ?? []) qatorlar.push(`• <b>${esc(x.ism)}</b> — ${esc(x.rol)}`);
   qatorlar.push("", `Jami: <b>${(data ?? []).length}</b>`);
   return qatorlar.join("\n");
+}
+
+// Rollar (lavozimlar) ro'yxati — tugma menyusi uchun
+async function rollarList(): Promise<string[]> {
+  // deno-lint-ignore no-explicit-any
+  const { data } = await supabase.from("rollar").select("nom").order("nom") as { data: any[] | null };
+  return (data ?? []).map((r) => String(r.nom));
+}
+// Rol tugmalari + "yangi rol" (dinamik)
+function rolKlaviatura(roles: string[]): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  roles.forEach((r, i) => { kb.text(r, `xq_rol_${r}`); if (i % 2 === 1) kb.row(); });
+  kb.row().text("➕ Yangi rol (lavozim)", "xq_yangirol");
+  return kb;
+}
+// Xodimni saqlash (rol yangi bo'lsa rollarga ham qo'shiladi)
+async function xodimSaqla(tgid: number, ism: string, rol: string): Promise<string | null> {
+  await supabase.from("rollar").upsert({ nom: rol }, { onConflict: "nom" });
+  const { error } = await supabase.from("xodimlar").upsert(
+    { telegram_id: tgid, ism, rol, arxiv: false }, { onConflict: "telegram_id" },
+  );
+  return error?.message ?? null;
 }
 
 // Joriy oy (YYYY-MM, Asia/Tashkent)
@@ -605,19 +627,29 @@ bot.callbackQuery(/^xq_rol_(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery("Ma'lumot yo'q, qaytadan boshlang.");
     return;
   }
-  const { error } = await supabase.from("xodimlar").upsert(
-    { telegram_id: tgid, ism, rol, arxiv: false },
-    { onConflict: "telegram_id" },
-  );
+  const err = await xodimSaqla(tgid, ism, rol);
   ctx.session.xodimStep = undefined;
   ctx.session.yangiIsm = undefined;
   ctx.session.yangiTgId = undefined;
   await ctx.answerCallbackQuery();
-  if (error) {
-    await ctx.reply("❌ Xato: " + error.message);
+  if (err) { await ctx.reply("❌ Xato: " + err); return; }
+  await ctx.reply(`✅ Qo'shildi: <b>${esc(ism)}</b> — ${esc(rol)} (ID ${tgid})`, { parse_mode: "HTML" });
+});
+
+// Yangi rol (lavozim) yaratish — nomni so'raydi
+bot.callbackQuery("xq_yangirol", async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || (!rahbarmi(x.rol) && !superAdminmi(x.telegram_id))) {
+    await ctx.answerCallbackQuery("Ruxsat yo'q");
     return;
   }
-  await ctx.reply(`✅ Qo'shildi: <b>${esc(ism)}</b> — ${esc(rol)} (ID ${tgid})`, { parse_mode: "HTML" });
+  if (!ctx.session.yangiIsm || !ctx.session.yangiTgId) {
+    await ctx.answerCallbackQuery("Ma'lumot yo'q, qaytadan boshlang.");
+    return;
+  }
+  ctx.session.xodimStep = "yangirol";
+  await ctx.answerCallbackQuery();
+  await ctx.reply("Yangi rol (lavozim) nomini kiriting (masalan: Omborchi):");
 });
 // Maosh — oylik hisobot
 bot.hears(TUGMA.maosh, async (ctx) => {
@@ -884,11 +916,21 @@ bot.on("message", async (ctx) => {
       }
       ctx.session.yangiTgId = id;
       ctx.session.xodimStep = undefined;
-      const kb = new InlineKeyboard()
-        .text("Sotuvchi", "xq_rol_Sotuvchi").text("Nazoratchi", "xq_rol_Nazoratchi").row()
-        .text("Marketolog", "xq_rol_Marketolog").text("Director", "xq_rol_Director").row()
-        .text("Test (sinov)", "xq_rol_Test");
-      await ctx.reply(`ID: <b>${id}</b>\nRolni tanlang:`, { parse_mode: "HTML", reply_markup: kb });
+      const kb = rolKlaviatura(await rollarList());
+      await ctx.reply(`ID: <b>${id}</b>\nRolni (lavozimni) tanlang yoki yangisini qo'shing:`, { parse_mode: "HTML", reply_markup: kb });
+      return;
+    }
+    if (ctx.session.xodimStep === "yangirol") {
+      const rol = t.slice(0, 40).trim();
+      const ism = ctx.session.yangiIsm;
+      const tgid = ctx.session.yangiTgId;
+      ctx.session.xodimStep = undefined;
+      ctx.session.yangiIsm = undefined;
+      ctx.session.yangiTgId = undefined;
+      if (!ism || !tgid || !rol) { await ctx.reply("Ma'lumot yo'q, qaytadan boshlang."); return; }
+      const err = await xodimSaqla(tgid, ism, rol);
+      if (err) { await ctx.reply("❌ Xato: " + err); return; }
+      await ctx.reply(`✅ Qo'shildi: <b>${esc(ism)}</b> — <b>${esc(rol)}</b> (ID ${tgid})\n🆕 Yangi lavozim yaratildi.`, { parse_mode: "HTML" });
       return;
     }
   }
