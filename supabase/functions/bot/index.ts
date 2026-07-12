@@ -49,6 +49,12 @@ interface SessionData {
   sinovStep?: "ism" | "tgid" | "summa";
   sinovIsm?: string;
   sinovTgId?: number;
+  // Davomatni qo'lda tuzatish oqimi
+  tuzatStep?: "sana" | "keldi" | "ketdi";
+  tuzatTgId?: number;
+  tuzatIsm?: string;
+  tuzatSana?: string;
+  tuzatKeldi?: string | null;
 }
 type Ctx = Context & SessionFlavor<SessionData>;
 
@@ -261,6 +267,17 @@ function raqamOl(t: string): number {
   const n = parseInt(String(t).replace(/[^\d]/g, ""), 10);
   return Number.isFinite(n) ? n : NaN;
 }
+// Sana YYYY-MM-DD to'g'riligi
+function sanaTogri(s: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(`${s}T00:00:00+05:00`));
+}
+// "HH:MM" ni berilgan sanaga Asia/Tashkent (UTC+5) ISO vaqtga aylantirish
+function vaqtIso(sana: string, hhmm: string): string | null {
+  const m = String(hhmm).trim().match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+  if (!m) return null;
+  const hh = m[1].padStart(2, "0");
+  return new Date(`${sana}T${hh}:${m[2]}:00+05:00`).toISOString();
+}
 
 // Joriy oy (YYYY-MM, Asia/Tashkent)
 function joriyOy(): string {
@@ -320,8 +337,9 @@ const TUGMA = {
   tushlikka: "🍽 Tushlikka", tushlikdan: "↩️ Tushlikdan keldim",
   hisobot: "📊 Hisobotlar", xodimlar: "👥 Xodimlar",
   maosh: "💰 Maosh", sinov: "🧪 Sinov", admin: "⚙️ Super admin",
+  tuzat: "✏️ Davomat tuzatish",
 };
-function menuForAccess(rahbar: boolean, superAdmin: boolean): Keyboard {
+function menuForAccess(rahbar: boolean, superAdmin: boolean, tuzatuvchi = false): Keyboard {
   const kb = new Keyboard()
     .text(TUGMA.keldi).text(TUGMA.ketdi).row()
     .text(TUGMA.tushlikka).text(TUGMA.tushlikdan).row();
@@ -329,8 +347,15 @@ function menuForAccess(rahbar: boolean, superAdmin: boolean): Keyboard {
     kb.text(TUGMA.hisobot).text(TUGMA.xodimlar).row();
     kb.text(TUGMA.maosh).text(TUGMA.sinov).row();
   }
+  if (tuzatuvchi || superAdmin) kb.text(TUGMA.tuzat).row();
   if (superAdmin) kb.text(TUGMA.admin).row();
   return kb.resized().persistent();
+}
+// Rol davomatni qo'lda tuzata oladimi (rollar.davomat_tuzata_oladi)
+async function rolTuzatadimi(rol: string): Promise<boolean> {
+  const { data } = await supabase.from("rollar")
+    .select("davomat_tuzata_oladi").eq("nom", rol).maybeSingle();
+  return Boolean(data?.davomat_tuzata_oladi);
 }
 
 // Raqamni ming ajratgichli formatlash: 1500000 -> "1 500 000"
@@ -404,8 +429,8 @@ async function maoshBarUrl(): Promise<string | null> {
 }
 
 // deno-lint-ignore no-explicit-any
-function anaMenu(x: any): Keyboard {
-  return menuForAccess(rahbarmi(x.rol), superAdminmi(x.telegram_id));
+async function anaMenu(x: any): Promise<Keyboard> {
+  return menuForAccess(rahbarmi(x.rol), superAdminmi(x.telegram_id), await rolTuzatadimi(x.rol));
 }
 function lokatsiyaKlaviatura(): Keyboard {
   return new Keyboard().requestLocation("📍 Lokatsiyani yuborish").resized().oneTime();
@@ -481,12 +506,13 @@ bot.command("start", async (ctx) => {
   }
   const superAdmin = superAdminmi(tgId);
   const rahbar = rahbarmi(x.rol);
+  const tuzat = await rolTuzatadimi(x.rol);
   const rolTavsif = superAdmin ? "Super admin — to'liq access" : rahbar ? `${x.rol} (rahbar)` : x.rol;
   await ctx.reply(
     `👋 <b>Assalomu alaykum, ${esc(x.ism)}!</b>\n\n` +
       `Lavozim:  <b>${esc(rolTavsif)}</b>\n\n` +
       "Quyidagi <b>menyu tugmalari</b> orqali davomat qiling 👇",
-    { parse_mode: "HTML", reply_markup: menuForAccess(rahbar, superAdmin) },
+    { parse_mode: "HTML", reply_markup: menuForAccess(rahbar, superAdmin, tuzat) },
   );
 });
 
@@ -756,6 +782,46 @@ bot.hears(TUGMA.admin, async (ctx) => {
   await ctx.reply("⚙️ Super admin panel — to'liq access. Funksiyalar keyingi bosqichda.");
 });
 
+// ── Davomatni qo'lda tuzatish (HR roli / super admin) ─────
+// deno-lint-ignore no-explicit-any
+async function tuzatXodimKb(): Promise<InlineKeyboard> {
+  const { data } = await supabase.from("xodimlar")
+    .select("telegram_id, ism").eq("arxiv", false).order("ism") as { data: any[] | null };
+  const kb = new InlineKeyboard();
+  (data ?? []).forEach((xo, i) => { kb.text(xo.ism, `tz_pick_${xo.telegram_id}`); if (i % 2 === 1) kb.row(); });
+  return kb;
+}
+bot.hears(TUGMA.tuzat, async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x) { await ctx.reply("Siz ro'yxatda yo'qsiz."); return; }
+  if (!superAdminmi(x.telegram_id) && !(await rolTuzatadimi(x.rol))) {
+    await ctx.reply("Bu bo'lim faqat HR / davomat mas'uli uchun.");
+    return;
+  }
+  const kb = await tuzatXodimKb();
+  await ctx.reply("✏️ <b>Davomatni tuzatish</b>\n\nQaysi xodimni tuzatamiz?", { parse_mode: "HTML", reply_markup: kb });
+});
+bot.callbackQuery(/^tz_pick_(\d+)$/, async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || (!superAdminmi(x.telegram_id) && !(await rolTuzatadimi(x.rol)))) {
+    await ctx.answerCallbackQuery("Ruxsat yo'q");
+    return;
+  }
+  const tgid = Number(ctx.match![1]);
+  // deno-lint-ignore no-explicit-any
+  const { data: xo } = await supabase.from("xodimlar").select("ism").eq("telegram_id", tgid).maybeSingle() as { data: any | null };
+  ctx.session.tuzatTgId = tgid;
+  ctx.session.tuzatIsm = xo?.ism ?? String(tgid);
+  ctx.session.tuzatSana = undefined;
+  ctx.session.tuzatKeldi = undefined;
+  ctx.session.tuzatStep = "sana";
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    `👤 <b>${esc(xo?.ism ?? tgid)}</b>\n\nQaysi <b>sana</b>ni tuzatamiz?\nBugun uchun <b>bugun</b> yozing, yoki <b>YYYY-MM-DD</b> (masalan 2026-07-12).`,
+    { parse_mode: "HTML" },
+  );
+});
+
 // Lokatsiya bosqichi
 bot.on("message:location", async (ctx) => {
   if (ctx.session.step !== "lokatsiya" || !ctx.session.davomatFlow) return;
@@ -763,14 +829,14 @@ bot.on("message:location", async (ctx) => {
   if (!x) { tozala(ctx); return; }
   if (forwardMi(ctx)) {
     tozala(ctx);
-    await ctx.reply("❌ Forward qilingan lokatsiya qabul qilinmaydi.", { reply_markup: anaMenu(x) });
+    await ctx.reply("❌ Forward qilingan lokatsiya qabul qilinmaydi.", { reply_markup: await anaMenu(x) });
     return;
   }
   const test = testRejimmi(x.telegram_id);
   const yosh = Math.floor(Date.now() / 1000) - (ctx.message?.date ?? 0);
   if (yosh > OFIS.maxYoshSek && !test) {
     tozala(ctx);
-    await ctx.reply("❌ Eski lokatsiya. Joriy lokatsiyani yuboring.", { reply_markup: anaMenu(x) });
+    await ctx.reply("❌ Eski lokatsiya. Joriy lokatsiyani yuboring.", { reply_markup: await anaMenu(x) });
     return;
   }
   const loc = ctx.message?.location;
@@ -778,7 +844,7 @@ bot.on("message:location", async (ctx) => {
   const { ok, masofa, radius } = await ofisdaMi(loc.latitude, loc.longitude);
   if (!ok && !test) {
     tozala(ctx);
-    await ctx.reply(`❌ Siz ofisdan ${masofa} m uzoqdasiz (ruxsat: ${radius} m).`, { reply_markup: anaMenu(x) });
+    await ctx.reply(`❌ Siz ofisdan ${masofa} m uzoqdasiz (ruxsat: ${radius} m).`, { reply_markup: await anaMenu(x) });
     return;
   }
   ctx.session.lat = loc.latitude;
@@ -795,7 +861,7 @@ bot.on("message:video_note", async (ctx) => {
   if (!x) { tozala(ctx); return; }
   if (forwardMi(ctx)) {
     tozala(ctx);
-    await ctx.reply("❌ Forward qilingan video qabul qilinmaydi.", { reply_markup: anaMenu(x) });
+    await ctx.reply("❌ Forward qilingan video qabul qilinmaydi.", { reply_markup: await anaMenu(x) });
     return;
   }
   const vn = ctx.message?.video_note;
@@ -811,13 +877,13 @@ bot.on("message:video_note", async (ctx) => {
     tozala(ctx);
     if (error) {
       console.error("keldi upsert:", error);
-      await ctx.reply("❌ Saqlashda xato. Qayta urinib ko'ring.", { reply_markup: anaMenu(x) });
+      await ctx.reply("❌ Saqlashda xato. Qayta urinib ko'ring.", { reply_markup: await anaMenu(x) });
       return;
     }
     const holat = data?.holat ?? keldiHolat(now);
     await ctx.reply(
       `✅ Keldi qayd etildi: <b>${soatMatn(now)}</b> — ${esc(holat)}`,
-      { parse_mode: "HTML", reply_markup: anaMenu(x) },
+      { parse_mode: "HTML", reply_markup: await anaMenu(x) },
     );
     const emoji = holat === "Kech qoldi" ? "🟠" : "🟢";
     const izoh = holat === "Kech qoldi" ? " — <i>kech qoldi</i>" : "";
@@ -829,13 +895,13 @@ bot.on("message:video_note", async (ctx) => {
     tozala(ctx);
     if (error) {
       console.error("ketdi update:", error);
-      await ctx.reply("❌ Saqlashda xato. Qayta urinib ko'ring.", { reply_markup: anaMenu(x) });
+      await ctx.reply("❌ Saqlashda xato. Qayta urinib ko'ring.", { reply_markup: await anaMenu(x) });
       return;
     }
     const soat = ((data?.sof_min ?? 0) / 60).toFixed(1);
     await ctx.reply(
       `✅ Ketdi qayd etildi: <b>${soatMatn(now)}</b>. Bugungi ish: <b>${soat} soat</b>.`,
-      { parse_mode: "HTML", reply_markup: anaMenu(x) },
+      { parse_mode: "HTML", reply_markup: await anaMenu(x) },
     );
     await davomatXulosa(`🔴 <b>${esc(x.ism)}</b> ketdi · <b>${soatMatn(now)}</b> — bugun <b>${soat} soat</b>`);
   }
@@ -1063,6 +1129,60 @@ bot.on("message", async (ctx) => {
     }
   }
 
+  // Davomatni qo'lda tuzatish oqimi (sana -> keldi -> ketdi)
+  if (ctx.session.tuzatStep && t) {
+    if (ctx.session.tuzatStep === "sana") {
+      const s = t.toLowerCase() === "bugun" ? sanaTashkent() : t;
+      if (!sanaTogri(s)) { await ctx.reply("❌ Sana formati noto'g'ri. YYYY-MM-DD (masalan 2026-07-12) yoki 'bugun' yozing."); return; }
+      ctx.session.tuzatSana = s;
+      ctx.session.tuzatStep = "keldi";
+      await ctx.reply(`Sana:  <b>${s}</b>\n\n🟢 <b>Kelgan vaqti</b>ni kiriting (HH:MM, masalan <b>09:00</b>):`, { parse_mode: "HTML" });
+      return;
+    }
+    if (ctx.session.tuzatStep === "keldi") {
+      const iso = vaqtIso(ctx.session.tuzatSana!, t);
+      if (!iso) { await ctx.reply("❌ Vaqt formati: HH:MM (masalan 09:00)."); return; }
+      ctx.session.tuzatKeldi = iso;
+      ctx.session.tuzatStep = "ketdi";
+      await ctx.reply("🔴 <b>Ketgan vaqti</b>ni kiriting (HH:MM, masalan <b>18:00</b>) yoki <b>-</b> (hali ketmagan bo'lsa):", { parse_mode: "HTML" });
+      return;
+    }
+    if (ctx.session.tuzatStep === "ketdi") {
+      const sana = ctx.session.tuzatSana!;
+      const keldiIso = ctx.session.tuzatKeldi!;
+      const tgid = ctx.session.tuzatTgId!;
+      const ism = ctx.session.tuzatIsm ?? String(tgid);
+      let ketdiIso: string | null = null;
+      if (t !== "-") {
+        ketdiIso = vaqtIso(sana, t);
+        if (!ketdiIso) { await ctx.reply("❌ Vaqt formati: HH:MM (masalan 18:00) yoki - kiriting."); return; }
+      }
+      const holat = keldiHolat(new Date(keldiIso));
+      // deno-lint-ignore no-explicit-any
+      const { data, error } = await supabase.from("davomat").upsert(
+        { telegram_id: tgid, sana, keldi: keldiIso, ketdi: ketdiIso, holat },
+        { onConflict: "telegram_id,sana" },
+      ).select().maybeSingle() as { data: any | null; error: any };
+      ctx.session.tuzatStep = undefined;
+      ctx.session.tuzatTgId = undefined;
+      ctx.session.tuzatIsm = undefined;
+      ctx.session.tuzatSana = undefined;
+      ctx.session.tuzatKeldi = undefined;
+      if (error) { await ctx.reply("❌ Saqlashda xato: " + error.message); return; }
+      const soat = ((data?.sof_min ?? 0) / 60).toFixed(1);
+      await ctx.reply(
+        "✅ <b>Davomat tuzatildi</b>\n\n" +
+          `👤 <b>${esc(ism)}</b>\n` +
+          `📅 Sana:  <b>${sana}</b>\n` +
+          `🟢 Keldi:  <b>${soatMatn(new Date(keldiIso))}</b>\n` +
+          `🔴 Ketdi:  <b>${ketdiIso ? soatMatn(new Date(ketdiIso)) : "—"}</b>\n` +
+          `⏱ Ish vaqti:  <b>${soat} soat</b>  ·  ${esc(holat)}`,
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+  }
+
   // Tanilmagan matn — iliq javob + menyuni qayta ko'rsatish (bold, ochiq)
   const uid = ctx.from?.id;
   const xu = uid ? await xodimByTgId(uid) : null;
@@ -1078,6 +1198,7 @@ bot.on("message", async (ctx) => {
   }
   const fbSuper = superAdminmi(xu.telegram_id);
   const fbRahbar = rahbarmi(xu.rol);
+  const fbTuzat = await rolTuzatadimi(xu.rol);
   const satr = [
     `👋 <b>Assalomu alaykum, ${esc(xu.ism)}!</b>`,
     "",
@@ -1095,7 +1216,7 @@ bot.on("message", async (ctx) => {
   satr.push("Kerakli tugmani bosing yoki <b>/start</b> yuboring 👇");
   await ctx.reply(satr.join("\n"), {
     parse_mode: "HTML",
-    reply_markup: menuForAccess(fbRahbar, fbSuper),
+    reply_markup: menuForAccess(fbRahbar, fbSuper, fbTuzat),
   });
 });
 
