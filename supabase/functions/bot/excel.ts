@@ -34,34 +34,34 @@ function headerRow(row: any, bg: string) {
   });
 }
 
-export interface MaoshXRow { ism: string; rol: string; jami_soat: number; baza: number; bonus: number; yakuniy: number; }
+export interface MaoshXRow { ism: string; rol: string; jami_soat: number; baza: number; ovqat: number; bonus: number; yakuniy: number; }
 
 export async function maoshXlsx(oy: string, rows: MaoshXRow[]): Promise<Uint8Array> {
   const ExcelJS = (await import("npm:exceljs@4.4.0")).default;
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Maosh");
-  ws.columns = [{ width: 28 }, { width: 15 }, { width: 12 }, { width: 16 }, { width: 16 }, { width: 18 }];
-  banner(ws, "A1:F1", `OYLIK MAOSH — ${oy}`);
-  headerRow(ws.addRow(["Xodim", "Rol", "Ish soati", "Baza (so'm)", "Bonus (so'm)", "Umumiy maosh"]), NAVY2);
+  ws.columns = [{ width: 28 }, { width: 15 }, { width: 12 }, { width: 16 }, { width: 15 }, { width: 15 }, { width: 18 }];
+  banner(ws, "A1:G1", `OYLIK MAOSH — ${oy}`);
+  headerRow(ws.addRow(["Xodim", "Rol", "Ish soati", "Baza (so'm)", "Ovqat (so'm)", "Bonus (so'm)", "Umumiy maosh"]), NAVY2);
 
   rows.forEach((r, i) => {
-    const row = ws.addRow([r.ism, r.rol, Number(r.jami_soat), Number(r.baza), Number(r.bonus) || 0, Number(r.yakuniy)]);
+    const row = ws.addRow([r.ism, r.rol, Number(r.jami_soat), Number(r.baza), Number(r.ovqat) || 0, Number(r.bonus) || 0, Number(r.yakuniy)]);
     row.height = 20;
     // deno-lint-ignore no-explicit-any
     row.eachCell((c: any) => { c.border = thin(); if (i % 2) c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: ZEBRA } }; });
     row.getCell(1).font = { bold: true, color: { argb: NAVY } };
-    [4, 5, 6].forEach((n) => { row.getCell(n).numFmt = "#,##0"; row.getCell(n).alignment = { horizontal: "right" }; });
+    [4, 5, 6, 7].forEach((n) => { row.getCell(n).numFmt = "#,##0"; row.getCell(n).alignment = { horizontal: "right" }; });
     row.getCell(3).alignment = { horizontal: "center" };
-    row.getCell(6).fill = { type: "pattern", pattern: "solid", fgColor: { argb: ORANGE_BG } };
-    row.getCell(6).font = { bold: true, color: { argb: ORANGE_FG } };
+    row.getCell(7).fill = { type: "pattern", pattern: "solid", fgColor: { argb: ORANGE_BG } };
+    row.getCell(7).font = { bold: true, color: { argb: ORANGE_FG } };
   });
 
   const sum = (k: keyof MaoshXRow) => rows.reduce((s, r) => s + Number(r[k] as number), 0);
-  const tot = ws.addRow(["JAMI", "", sum("jami_soat"), sum("baza"), sum("bonus"), sum("yakuniy")]);
+  const tot = ws.addRow(["JAMI", "", sum("jami_soat"), sum("baza"), sum("ovqat"), sum("bonus"), sum("yakuniy")]);
   tot.height = 22;
   // deno-lint-ignore no-explicit-any
   tot.eachCell((c: any) => { c.font = { bold: true, color: { argb: NAVY } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: TOTBG } }; c.border = thin(); });
-  [4, 5, 6].forEach((n) => { tot.getCell(n).numFmt = "#,##0"; tot.getCell(n).alignment = { horizontal: "right" }; });
+  [4, 5, 6, 7].forEach((n) => { tot.getCell(n).numFmt = "#,##0"; tot.getCell(n).alignment = { horizontal: "right" }; });
 
   const buf = await wb.xlsx.writeBuffer();
   return new Uint8Array(buf as ArrayBuffer);

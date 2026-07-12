@@ -40,9 +40,11 @@ interface SessionData {
   lng?: number;
   masofa?: number;
   // Xodim qo'shish oqimi
-  xodimStep?: "ism" | "tgid" | "yangirol";
+  xodimStep?: "ism" | "tgid" | "yangirol" | "yangirol_fix" | "yangirol_ovqat";
   yangiIsm?: string;
   yangiTgId?: number;
+  yangiRol?: string;
+  yangiRolFix?: number;
   // Sinovchi qo'shish oqimi
   sinovStep?: "ism" | "tgid" | "summa";
   sinovIsm?: string;
@@ -237,13 +239,27 @@ function rolKlaviatura(roles: string[]): InlineKeyboard {
   kb.row().text("➕ Yangi rol (lavozim)", "xq_yangirol");
   return kb;
 }
-// Xodimni saqlash (rol yangi bo'lsa rollarga ham qo'shiladi)
+// Xodimni saqlash (rol yangi bo'lsa rollarga ham qo'shiladi — mavjud maosh qoidasi buzilmaydi)
 async function xodimSaqla(tgid: number, ism: string, rol: string): Promise<string | null> {
   await supabase.from("rollar").upsert({ nom: rol }, { onConflict: "nom" });
   const { error } = await supabase.from("xodimlar").upsert(
     { telegram_id: tgid, ism, rol, arxiv: false }, { onConflict: "telegram_id" },
   );
   return error?.message ?? null;
+}
+
+// Yangi lavozim (rol) yaratish — fix maosh + ovqat/kun bilan
+async function rolSaqla(nom: string, fix: number, ovqat: number): Promise<string | null> {
+  const { error } = await supabase.from("rollar").upsert(
+    { nom, maosh_turi: "fix", fix_summa: fix, ovqat_kun: ovqat },
+    { onConflict: "nom" },
+  );
+  return error?.message ?? null;
+}
+// Matndan raqam ajratish ("1 500 000" / "1.500.000" / "40000" -> son)
+function raqamOl(t: string): number {
+  const n = parseInt(String(t).replace(/[^\d]/g, ""), 10);
+  return Number.isFinite(n) ? n : NaN;
 }
 
 // Joriy oy (YYYY-MM, Asia/Tashkent)
@@ -262,7 +278,10 @@ async function maoshHisobot(): Promise<string> {
   let jami = 0;
   for (const r of data ?? []) {
     jami += Number(r.yakuniy);
-    const bonus = Number(r.bonus) > 0 ? ` (+${fmtSum(Number(r.bonus))} bonus)` : "";
+    const p: string[] = [];
+    if (Number(r.ovqat) > 0) p.push(`+${fmtSum(Number(r.ovqat))} ovqat`);
+    if (Number(r.bonus) > 0) p.push(`+${fmtSum(Number(r.bonus))} bonus`);
+    const bonus = p.length ? ` (${p.join(", ")})` : "";
     qatorlar.push(`• <b>${esc(r.ism)}</b> — <b>${fmtSum(Number(r.yakuniy))}</b> so'm${bonus} · ${r.jami_soat}s`);
   }
   qatorlar.push("", `Jami to'lov: <b>${fmtSum(jami)}</b> so'm`);
@@ -274,9 +293,9 @@ async function maoshCsv(): Promise<{ nom: string; matn: string }> {
   const oy = joriyOy();
   // deno-lint-ignore no-explicit-any
   const { data } = await supabase.rpc("maosh_oylik", { p_oy: oy }) as { data: any[] | null };
-  let csv = "﻿" + "Ism,Rol,Soat,Baza,Bonus,Yakuniy\n";
+  let csv = "﻿" + "Ism,Rol,Soat,Baza,Ovqat,Bonus,Yakuniy\n";
   for (const r of data ?? []) {
-    csv += `"${String(r.ism).replace(/"/g, '""')}",${r.rol},${r.jami_soat},${r.baza},${r.bonus},${r.yakuniy}\n`;
+    csv += `"${String(r.ism).replace(/"/g, '""')}",${r.rol},${r.jami_soat},${r.baza},${r.ovqat ?? 0},${r.bonus},${r.yakuniy}\n`;
   }
   return { nom: `maosh_${oy}.csv`, matn: csv };
 }
@@ -464,7 +483,9 @@ bot.command("start", async (ctx) => {
   const rahbar = rahbarmi(x.rol);
   const rolTavsif = superAdmin ? "Super admin — to'liq access" : rahbar ? `${x.rol} (rahbar)` : x.rol;
   await ctx.reply(
-    `Assalomu alaykum, <b>${esc(x.ism)}</b>! 👋\n\nRol: <b>${esc(rolTavsif)}</b>\n\nQuyidagi tugmalar orqali davomat qiling.`,
+    `👋 <b>Assalomu alaykum, ${esc(x.ism)}!</b>\n\n` +
+      `Lavozim:  <b>${esc(rolTavsif)}</b>\n\n` +
+      "Quyidagi <b>menyu tugmalari</b> orqali davomat qiling 👇",
     { parse_mode: "HTML", reply_markup: menuForAccess(rahbar, superAdmin) },
   );
 });
@@ -665,7 +686,10 @@ bot.hears(TUGMA.maosh, async (ctx) => {
   let jami = 0;
   for (const r of data ?? []) {
     jami += Number(r.yakuniy);
-    const bonus = Number(r.bonus) > 0 ? ` (+${fmtSum(Number(r.bonus))} bonus)` : "";
+    const p: string[] = [];
+    if (Number(r.ovqat) > 0) p.push(`+${fmtSum(Number(r.ovqat))} ovqat`);
+    if (Number(r.bonus) > 0) p.push(`+${fmtSum(Number(r.bonus))} bonus`);
+    const bonus = p.length ? ` (${p.join(", ")})` : "";
     qatorlar.push(`• ${esc(r.ism)} — <b>${fmtSum(Number(r.yakuniy))}</b> so'm${bonus} · ${r.jami_soat}s`);
   }
   qatorlar.push("", `Jami to'lov: <b>${fmtSum(jami)}</b> so'm`);
@@ -922,15 +946,66 @@ bot.on("message", async (ctx) => {
     }
     if (ctx.session.xodimStep === "yangirol") {
       const rol = t.slice(0, 40).trim();
+      if (!rol) { await ctx.reply("Rol (lavozim) nomini kiriting."); return; }
+      ctx.session.yangiRol = rol;
+      ctx.session.xodimStep = "yangirol_fix";
+      await ctx.reply(
+        `🆕 Yangi lavozim:  <b>${esc(rol)}</b>\n\n` +
+          "Endi shu lavozimning oylik <b>fix maoshi</b>ni (so'm) kiriting.\n" +
+          "Masalan:  <b>2 000 000</b>\n\n" +
+          "(Fix maosh bo'lmasa <b>0</b> yozing.)",
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+    if (ctx.session.xodimStep === "yangirol_fix") {
+      const fix = raqamOl(t);
+      if (!Number.isFinite(fix) || fix < 0) {
+        await ctx.reply("❌ Noto'g'ri summa. Faqat raqam kiriting (masalan 2000000).");
+        return;
+      }
+      ctx.session.yangiRolFix = fix;
+      ctx.session.xodimStep = "yangirol_ovqat";
+      await ctx.reply(
+        `Fix maosh:  <b>${fmtSum(fix)}</b> so'm\n\n` +
+          "Endi <b>ovqat puli</b>ni — <b>bir kun</b> uchun (so'm) kiriting.\n" +
+          "Masalan:  <b>40 000</b>\n\n" +
+          "(Ovqat bo'lmasa <b>0</b> yozing. Jami ovqat = shu summa × kelgan kun.)",
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+    if (ctx.session.xodimStep === "yangirol_ovqat") {
+      const ovqat = raqamOl(t);
+      const rol = ctx.session.yangiRol;
+      const fix = ctx.session.yangiRolFix ?? 0;
       const ism = ctx.session.yangiIsm;
       const tgid = ctx.session.yangiTgId;
+      if (!Number.isFinite(ovqat) || ovqat < 0) {
+        await ctx.reply("❌ Noto'g'ri summa. Faqat raqam kiriting (masalan 40000).");
+        return;
+      }
       ctx.session.xodimStep = undefined;
       ctx.session.yangiIsm = undefined;
       ctx.session.yangiTgId = undefined;
-      if (!ism || !tgid || !rol) { await ctx.reply("Ma'lumot yo'q, qaytadan boshlang."); return; }
+      ctx.session.yangiRol = undefined;
+      ctx.session.yangiRolFix = undefined;
+      if (!rol || !ism || !tgid) { await ctx.reply("Ma'lumot yo'q, qaytadan boshlang."); return; }
+      const rerr = await rolSaqla(rol, fix, ovqat);
+      if (rerr) { await ctx.reply("❌ Rol saqlashda xato: " + rerr); return; }
       const err = await xodimSaqla(tgid, ism, rol);
       if (err) { await ctx.reply("❌ Xato: " + err); return; }
-      await ctx.reply(`✅ Qo'shildi: <b>${esc(ism)}</b> — <b>${esc(rol)}</b> (ID ${tgid})\n🆕 Yangi lavozim yaratildi.`, { parse_mode: "HTML" });
+      await ctx.reply(
+        "✅ <b>Qo'shildi</b>\n\n" +
+          `👤 Xodim:  <b>${esc(ism)}</b>\n` +
+          `💼 Lavozim:  <b>${esc(rol)}</b>  (yangi)\n` +
+          `🆔 ID:  <b>${tgid}</b>\n\n` +
+          "💰 <b>Maosh qoidasi:</b>\n" +
+          `• Fix maosh:  <b>${fmtSum(fix)}</b> so'm\n` +
+          `• Ovqat:  <b>${fmtSum(ovqat)}</b> so'm / kun\n\n` +
+          "Umumiy = fix + (ovqat × kelgan kun) + bonus.",
+        { parse_mode: "HTML" },
+      );
       return;
     }
   }
@@ -988,7 +1063,40 @@ bot.on("message", async (ctx) => {
     }
   }
 
-  await ctx.reply("Menyudan tugmani tanlang yoki /start bosing.");
+  // Tanilmagan matn — iliq javob + menyuni qayta ko'rsatish (bold, ochiq)
+  const uid = ctx.from?.id;
+  const xu = uid ? await xodimByTgId(uid) : null;
+  if (!xu) {
+    await ctx.reply(
+      "👋 <b>Assalomu alaykum!</b>\n\n" +
+        "Siz hozircha tizimda ro'yxatda yo'qsiz.\n\n" +
+        `Sizning Telegram ID:  <b>${uid ?? "—"}</b>\n\n` +
+        "Ushbu ID ni rahbaringizga bering — u sizni tizimga qo'shadi.",
+      { parse_mode: "HTML" },
+    );
+    return;
+  }
+  const fbSuper = superAdminmi(xu.telegram_id);
+  const fbRahbar = rahbarmi(xu.rol);
+  const satr = [
+    `👋 <b>Assalomu alaykum, ${esc(xu.ism)}!</b>`,
+    "",
+    "Men — <b>iMed HR yordamchisi</b>. Quyidagi tugmalar orqali ishlaymiz:",
+    "",
+    "🟢 <b>Keldim</b>   /   🔴 <b>Ketdim</b>",
+    "🍽 <b>Tushlikka</b>   /   ↩️ <b>Tushlikdan keldim</b>",
+  ];
+  if (fbRahbar || fbSuper) {
+    satr.push("");
+    satr.push("📊 <b>Hisobotlar</b>   ·   👥 <b>Xodimlar</b>");
+    satr.push("💰 <b>Maosh</b>   ·   🧪 <b>Sinov</b>");
+  }
+  satr.push("");
+  satr.push("Kerakli tugmani bosing yoki <b>/start</b> yuboring 👇");
+  await ctx.reply(satr.join("\n"), {
+    parse_mode: "HTML",
+    reply_markup: menuForAccess(fbRahbar, fbSuper),
+  });
 });
 
 bot.catch((err) => console.error("Bot xatosi:", err.error));

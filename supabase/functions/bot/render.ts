@@ -175,11 +175,12 @@ export async function davomatPng(sana: string, rows: DavomatRow[]): Promise<Uint
   return await toPng(markup, 1452, 1180);
 }
 
-export interface MaoshRow { ism: string; rol: string; jami_soat: number; baza: number; bonus: number; yakuniy: number; }
+export interface MaoshRow { ism: string; rol: string; jami_soat: number; baza: number; ovqat: number; bonus: number; yakuniy: number; }
 
 export async function maoshPng(oy: string, rows: MaoshRow[]): Promise<Uint8Array> {
   const jamiY = rows.reduce((s, r) => s + Number(r.yakuniy), 0);
   const jamiB = rows.reduce((s, r) => s + Number(r.baza), 0);
+  const jamiOv = rows.reduce((s, r) => s + Number(r.ovqat || 0), 0);
   const jamiBon = rows.reduce((s, r) => s + Number(r.bonus), 0);
   const jamiS = rows.reduce((s, r) => s + Number(r.jami_soat), 0);
   const ort = rows.length ? (jamiY / rows.length / 1e6).toFixed(2) : "0";
@@ -190,11 +191,12 @@ export async function maoshPng(oy: string, rows: MaoshRow[]): Promise<Uint8Array
     `<div style="display:flex;width:${w};justify-content:${al};font-size:14px;font-weight:700;color:white;">${t}</div>`;
   const tr = (r: MaoshRow, i: number) =>
     `<div style="display:flex;align-items:center;padding:13px 16px;background:${i % 2 ? "#F7FAFD" : "#FFFFFF"};border-bottom:1px solid #E5EBF2;">
-      <div style="display:flex;width:250px;font-size:16px;font-weight:700;color:#0E2A47;">${esc(r.ism)}</div>
-      <div style="display:flex;width:130px;"><div style="display:flex;font-size:13px;font-weight:600;color:#2E86D6;background:#E7F0FB;padding:3px 10px;border-radius:8px;">${esc(r.rol)}</div></div>
-      <div style="display:flex;width:110px;justify-content:flex-end;font-size:15px;font-weight:600;color:#1B2B41;">${r.jami_soat}</div>
-      <div style="display:flex;width:170px;justify-content:flex-end;font-size:15px;font-weight:600;color:#1B2B41;">${fmtSum(Number(r.baza))}</div>
-      <div style="display:flex;width:150px;justify-content:flex-end;font-size:15px;font-weight:600;color:#1B2B41;">${Number(r.bonus) > 0 ? fmtSum(Number(r.bonus)) : "—"}</div>
+      <div style="display:flex;width:230px;font-size:16px;font-weight:700;color:#0E2A47;">${esc(r.ism)}</div>
+      <div style="display:flex;width:110px;"><div style="display:flex;font-size:13px;font-weight:600;color:#2E86D6;background:#E7F0FB;padding:3px 10px;border-radius:8px;">${esc(r.rol)}</div></div>
+      <div style="display:flex;width:95px;justify-content:flex-end;font-size:15px;font-weight:600;color:#1B2B41;">${r.jami_soat}</div>
+      <div style="display:flex;width:150px;justify-content:flex-end;font-size:15px;font-weight:600;color:#1B2B41;">${fmtSum(Number(r.baza))}</div>
+      <div style="display:flex;width:130px;justify-content:flex-end;font-size:15px;font-weight:600;color:#1B2B41;">${Number(r.ovqat) > 0 ? fmtSum(Number(r.ovqat)) : "—"}</div>
+      <div style="display:flex;width:130px;justify-content:flex-end;font-size:15px;font-weight:600;color:#1B2B41;">${Number(r.bonus) > 0 ? fmtSum(Number(r.bonus)) : "—"}</div>
       <div style="display:flex;flex:1;justify-content:flex-end;"><div style="display:flex;background:#FCEBD6;color:#D98324;font-size:15px;font-weight:700;padding:5px 12px;border-radius:10px;">${fmtSum(Number(r.yakuniy))}</div></div>
     </div>`;
   const bar = (r: MaoshRow) => {
@@ -238,16 +240,17 @@ export async function maoshPng(oy: string, rows: MaoshRow[]): Promise<Uint8Array
     <div style="${CARD}flex-direction:column;margin-top:20px;">
       <div style="display:flex;font-size:22px;font-weight:700;color:#0E2A47;margin-bottom:14px;">Maosh varaqasi</div>
       <div style="display:flex;align-items:center;padding:13px 16px;border-radius:10px;background:linear-gradient(90deg,#0E2A47,#1C3E68);">
-        ${th("Xodim", "250px")}${th("Rol", "130px")}${th("Ish soati", "110px", "flex-end")}${th("Baza", "170px", "flex-end")}${th("Bonus", "150px", "flex-end")}
+        ${th("Xodim", "230px")}${th("Rol", "110px")}${th("Ish soati", "95px", "flex-end")}${th("Baza", "150px", "flex-end")}${th("Ovqat", "130px", "flex-end")}${th("Bonus", "130px", "flex-end")}
         <div style="display:flex;flex:1;justify-content:flex-end;font-size:14px;font-weight:700;color:white;">Umumiy maosh</div>
       </div>
       ${rows.map(tr).join("")}
       <div style="display:flex;align-items:center;padding:14px 16px;background:#EAF3FC;border-top:2px solid #0E2A47;">
-        <div style="display:flex;width:250px;font-size:16px;font-weight:800;color:#0E2A47;">JAMI</div>
-        <div style="display:flex;width:130px;"></div>
-        <div style="display:flex;width:110px;justify-content:flex-end;font-size:15px;font-weight:800;color:#0E2A47;">${jamiS}</div>
-        <div style="display:flex;width:170px;justify-content:flex-end;font-size:15px;font-weight:800;color:#0E2A47;">${fmtSum(jamiB)}</div>
-        <div style="display:flex;width:150px;justify-content:flex-end;font-size:15px;font-weight:800;color:#0E2A47;">${fmtSum(jamiBon)}</div>
+        <div style="display:flex;width:230px;font-size:16px;font-weight:800;color:#0E2A47;">JAMI</div>
+        <div style="display:flex;width:110px;"></div>
+        <div style="display:flex;width:95px;justify-content:flex-end;font-size:15px;font-weight:800;color:#0E2A47;">${jamiS}</div>
+        <div style="display:flex;width:150px;justify-content:flex-end;font-size:15px;font-weight:800;color:#0E2A47;">${fmtSum(jamiB)}</div>
+        <div style="display:flex;width:130px;justify-content:flex-end;font-size:15px;font-weight:800;color:#0E2A47;">${fmtSum(jamiOv)}</div>
+        <div style="display:flex;width:130px;justify-content:flex-end;font-size:15px;font-weight:800;color:#0E2A47;">${fmtSum(jamiBon)}</div>
         <div style="display:flex;flex:1;justify-content:flex-end;"><div style="display:flex;background:#0E2A47;color:white;font-size:16px;font-weight:800;padding:6px 14px;border-radius:10px;">${fmtSum(jamiY)}</div></div>
       </div>
     </div>
