@@ -55,6 +55,9 @@ interface SessionData {
   tuzatIsm?: string;
   tuzatSana?: string;
   tuzatKeldi?: string | null;
+  // Xodim kartasi tahrir oqimi
+  kartaStep?: "telefon" | "ishga_kirgan" | "izoh" | "tug_sana";
+  kartaId?: number;
 }
 type Ctx = Context & SessionFlavor<SessionData>;
 
@@ -244,6 +247,93 @@ async function xodimlarRoyxati(): Promise<string> {
   for (const x of data ?? []) qatorlar.push(`• <b>${esc(x.ism)}</b> — ${esc(x.rol)}`);
   qatorlar.push("", `Jami: <b>${(data ?? []).length}</b>`);
   return qatorlar.join("\n");
+}
+
+// ── Xodim kartasi (B faza) ────────────────────────────────
+const KUN_NOM = ["Yakshanba", "Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba"];
+function damKunMatn(arr: number[] | null): string {
+  if (!arr || arr.length === 0) return "—";
+  return [...arr].sort((a, b) => a - b).map((d) => KUN_NOM[d] ?? String(d)).join(", ");
+}
+
+// Xodimlar ro'yxati klaviaturasi (har biri — karta tugmasi)
+// deno-lint-ignore no-explicit-any
+function xodimlarKb(xl: any[]): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  xl.forEach((e, i) => { kb.text(`${e.arxiv ? "🗄 " : ""}${e.ism}`, `xk_${e.id}`); if (i % 2 === 1) kb.row(); });
+  kb.row().text("➕ Xodim qo'shish", "xq_add").text("🗄 Arxiv", "xk_arxlist");
+  return kb;
+}
+
+// Bitta xodim kartasi: matn + tahrir klaviaturasi
+async function xodimKarta(id: number): Promise<{ text: string; kb: InlineKeyboard } | null> {
+  // deno-lint-ignore no-explicit-any
+  const { data: x } = await supabase.from("xodimlar").select("*").eq("id", id).maybeSingle() as { data: any | null };
+  if (!x) return null;
+  const oy = joriyOy();
+  // deno-lint-ignore no-explicit-any
+  const { data: dv } = await supabase.from("davomat")
+    .select("sana, sof_min").eq("telegram_id", x.telegram_id).gte("sana", `${oy}-01`) as { data: any[] | null };
+  const kunlar = new Set((dv ?? []).map((r) => r.sana)).size;
+  const jamiMin = (dv ?? []).reduce((s, r) => s + (Number(r.sof_min) || 0), 0);
+  const soat = (jamiMin / 60).toFixed(1);
+
+  const L: string[] = [
+    `👤 <b>${esc(x.ism)}</b>`,
+    `💼 Lavozim:  <b>${esc(x.rol)}</b>`,
+    `📞 Telefon:  ${x.telefon ? esc(x.telefon) : "—"}`,
+    `📅 Ishga kirgan:  ${x.ishga_kirgan ?? "—"}`,
+    `🛏 Dam kunlar:  ${damKunMatn(x.dam_kunlar)}`,
+  ];
+  if (x.tug_sana) L.push(`🎂 Tug'ilgan:  ${x.tug_sana}`);
+  L.push(`🆔 ID:  <code>${x.telegram_id}</code>`);
+  if (x.hisobga_olinmaydi) L.push("⚪️ <i>Hisobga olinmaydi</i>");
+  if (x.izoh) L.push("", `📝 <i>${esc(x.izoh)}</i>`);
+  L.push("", `📊 <b>Bu oy</b> (${oy}):  <b>${kunlar}</b> kun · <b>${soat}</b> soat`);
+  if (x.arxiv) L.push("", "🗄 <b>ARXIVLANGAN</b>" + (x.arxiv_sana ? ` (${x.arxiv_sana})` : ""));
+
+  const kb = new InlineKeyboard()
+    .text("📞 Telefon", `xkt_${id}`).text("📅 Ishga kirgan", `xks_${id}`).row()
+    .text("🛏 Dam kunlar", `xkd_${id}`).text("📝 Izoh", `xki_${id}`).row()
+    .text("🎂 Tug'ilgan", `xkb_${id}`).text("🔄 Rol", `xkr_${id}`).row()
+    .text(x.arxiv ? "♻️ Tiklash" : "🗄 Arxivlash", `xka_${id}`).row()
+    .text("« Ro'yxat", "xk_list");
+  return { text: L.join("\n"), kb };
+}
+
+// Dam kunlar tanlash klaviaturasi (toggle)
+function damKunKb(id: number, tanlangan: number[]): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  const set = new Set(tanlangan ?? []);
+  KUN_NOM.forEach((nom, d) => {
+    kb.text(`${set.has(d) ? "✅" : "▫️"} ${nom}`, `xkdt_${id}_${d}`);
+    if (d % 2 === 1) kb.row();
+  });
+  kb.row().text("« Karta", `xk_${id}`);
+  return kb;
+}
+
+// Rol tanlash klaviaturasi mavjud xodim uchun (rolni o'zgartirish)
+function rolOzgartirKb(id: number, roles: string[]): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  roles.forEach((r, i) => { kb.text(r, `xkrs_${id}_${r}`); if (i % 2 === 1) kb.row(); });
+  kb.row().text("« Karta", `xk_${id}`);
+  return kb;
+}
+
+// Ism bo'yicha xodim topish ("X haqida ayt" uchun) — bitta aniq moslik qaytaradi
+// deno-lint-ignore no-explicit-any
+async function xodimIzla(matn: string): Promise<any | null> {
+  const { data } = await supabase.from("xodimlar").select("id, ism, telegram_id").order("ism") as { data: any[] | null };
+  const q = matn.toLowerCase();
+  const mos = (data ?? []).filter((x) => {
+    const ism = String(x.ism).toLowerCase();
+    if (q.includes(ism)) return true;
+    // ismning birinchi so'zi ham qidiriladi (masalan "Saidaxror haqida")
+    const bir = ism.split(/\s+/)[0];
+    return bir.length >= 3 && q.includes(bir);
+  });
+  return mos.length === 1 ? mos[0] : null;
 }
 
 // Rollar (lavozimlar) ro'yxati — tugma menyusi uchun
@@ -668,9 +758,135 @@ bot.hears(TUGMA.xodimlar, async (ctx) => {
     await ctx.reply("Bu bo'lim uchun ruxsatingiz yo'q.");
     return;
   }
-  const matn = await xodimlarRoyxati();
-  const kb = new InlineKeyboard().text("➕ Xodim qo'shish", "xq_add");
-  await ctx.reply(matn, { parse_mode: "HTML", reply_markup: kb });
+  // deno-lint-ignore no-explicit-any
+  const { data: xl } = await supabase.from("xodimlar")
+    .select("id, ism, arxiv").eq("arxiv", false).order("ism") as { data: any[] | null };
+  await ctx.reply(
+    `👥 <b>Xodimlar</b> — <b>${(xl ?? []).length}</b> ta faol\n\nKartani ochish uchun ismni bosing:`,
+    { parse_mode: "HTML", reply_markup: xodimlarKb(xl ?? []) },
+  );
+});
+
+// Karta: ro'yxatga qaytish
+bot.callbackQuery("xk_list", async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || !ruxsat(x, "xodim_boshqaradi")) { await ctx.answerCallbackQuery("Ruxsat yo'q"); return; }
+  // deno-lint-ignore no-explicit-any
+  const { data: xl } = await supabase.from("xodimlar")
+    .select("id, ism, arxiv").eq("arxiv", false).order("ism") as { data: any[] | null };
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText(
+    `👥 <b>Xodimlar</b> — <b>${(xl ?? []).length}</b> ta faol\n\nKartani ochish uchun ismni bosing:`,
+    { parse_mode: "HTML", reply_markup: xodimlarKb(xl ?? []) },
+  ).catch(() => {});
+});
+
+// Karta: arxivlanganlar ro'yxati
+bot.callbackQuery("xk_arxlist", async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || !ruxsat(x, "xodim_boshqaradi")) { await ctx.answerCallbackQuery("Ruxsat yo'q"); return; }
+  // deno-lint-ignore no-explicit-any
+  const { data: xl } = await supabase.from("xodimlar")
+    .select("id, ism, arxiv").eq("arxiv", true).order("ism") as { data: any[] | null };
+  await ctx.answerCallbackQuery();
+  const kb = new InlineKeyboard();
+  (xl ?? []).forEach((e, i) => { kb.text(`🗄 ${e.ism}`, `xk_${e.id}`); if (i % 2 === 1) kb.row(); });
+  kb.row().text("« Faol ro'yxat", "xk_list");
+  await ctx.editMessageText(
+    `🗄 <b>Arxivlangan xodimlar</b> — <b>${(xl ?? []).length}</b> ta`,
+    { parse_mode: "HTML", reply_markup: kb },
+  ).catch(() => {});
+});
+
+// Karta: bitta xodimni ochish
+bot.callbackQuery(/^xk_(\d+)$/, async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || !ruxsat(x, "xodim_boshqaradi")) { await ctx.answerCallbackQuery("Ruxsat yo'q"); return; }
+  const id = Number(ctx.match![1]);
+  const k = await xodimKarta(id);
+  await ctx.answerCallbackQuery();
+  if (!k) { await ctx.reply("Xodim topilmadi."); return; }
+  await ctx.editMessageText(k.text, { parse_mode: "HTML", reply_markup: k.kb }).catch(async () => {
+    await ctx.reply(k.text, { parse_mode: "HTML", reply_markup: k.kb });
+  });
+});
+
+// Karta: telefon / ishga_kirgan / izoh / tug_sana — matn so'rash
+async function kartaSora(ctx: Ctx, id: number, step: "telefon" | "ishga_kirgan" | "izoh" | "tug_sana", savol: string) {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || !ruxsat(x, "xodim_boshqaradi")) { await ctx.answerCallbackQuery("Ruxsat yo'q"); return; }
+  ctx.session.kartaStep = step;
+  ctx.session.kartaId = id;
+  await ctx.answerCallbackQuery();
+  await ctx.reply(savol, { parse_mode: "HTML" });
+}
+bot.callbackQuery(/^xkt_(\d+)$/, (ctx) => kartaSora(ctx, Number(ctx.match![1]), "telefon", "📞 Telefon raqamini kiriting (masalan +998901234567):"));
+bot.callbackQuery(/^xks_(\d+)$/, (ctx) => kartaSora(ctx, Number(ctx.match![1]), "ishga_kirgan", "📅 Ishga kirgan sanani kiriting (YYYY-MM-DD, masalan 2025-03-01):"));
+bot.callbackQuery(/^xki_(\d+)$/, (ctx) => kartaSora(ctx, Number(ctx.match![1]), "izoh", "📝 Izoh/eslatma kiriting (o'chirish uchun <b>-</b> yozing):"));
+bot.callbackQuery(/^xkb_(\d+)$/, (ctx) => kartaSora(ctx, Number(ctx.match![1]), "tug_sana", "🎂 Tug'ilgan sanani kiriting (YYYY-MM-DD):"));
+
+// Karta: dam kunlar — toggle klaviaturasi
+bot.callbackQuery(/^xkd_(\d+)$/, async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || !ruxsat(x, "xodim_boshqaradi")) { await ctx.answerCallbackQuery("Ruxsat yo'q"); return; }
+  const id = Number(ctx.match![1]);
+  // deno-lint-ignore no-explicit-any
+  const { data: xo } = await supabase.from("xodimlar").select("dam_kunlar").eq("id", id).maybeSingle() as { data: any | null };
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText("🛏 <b>Dam kunlarni</b> belgilang (bosib yoqiladi/o'chiriladi):", {
+    parse_mode: "HTML", reply_markup: damKunKb(id, xo?.dam_kunlar ?? []),
+  }).catch(() => {});
+});
+bot.callbackQuery(/^xkdt_(\d+)_(\d)$/, async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || !ruxsat(x, "xodim_boshqaradi")) { await ctx.answerCallbackQuery("Ruxsat yo'q"); return; }
+  const id = Number(ctx.match![1]);
+  const d = Number(ctx.match![2]);
+  // deno-lint-ignore no-explicit-any
+  const { data: xo } = await supabase.from("xodimlar").select("dam_kunlar").eq("id", id).maybeSingle() as { data: any | null };
+  const set = new Set<number>(xo?.dam_kunlar ?? []);
+  set.has(d) ? set.delete(d) : set.add(d);
+  const yangi = [...set].sort((a, b) => a - b);
+  await supabase.from("xodimlar").update({ dam_kunlar: yangi }).eq("id", id);
+  await ctx.answerCallbackQuery(KUN_NOM[d] + (set.has(d) ? " ✅" : " ❌"));
+  await ctx.editMessageReplyMarkup({ reply_markup: damKunKb(id, yangi) }).catch(() => {});
+});
+
+// Karta: rol o'zgartirish
+bot.callbackQuery(/^xkr_(\d+)$/, async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || !ruxsat(x, "xodim_boshqaradi")) { await ctx.answerCallbackQuery("Ruxsat yo'q"); return; }
+  const id = Number(ctx.match![1]);
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText("🔄 <b>Yangi rol (lavozim)</b>ni tanlang:", {
+    parse_mode: "HTML", reply_markup: rolOzgartirKb(id, await rollarList()),
+  }).catch(() => {});
+});
+bot.callbackQuery(/^xkrs_(\d+)_(.+)$/, async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || !ruxsat(x, "xodim_boshqaradi")) { await ctx.answerCallbackQuery("Ruxsat yo'q"); return; }
+  const id = Number(ctx.match![1]);
+  const rol = ctx.match![2];
+  await supabase.from("xodimlar").update({ rol }).eq("id", id);
+  await ctx.answerCallbackQuery("✅ Rol: " + rol);
+  const k = await xodimKarta(id);
+  if (k) await ctx.editMessageText(k.text, { parse_mode: "HTML", reply_markup: k.kb }).catch(() => {});
+});
+
+// Karta: arxivlash / tiklash (NO HARD DELETE)
+bot.callbackQuery(/^xka_(\d+)$/, async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || !ruxsat(x, "xodim_boshqaradi")) { await ctx.answerCallbackQuery("Ruxsat yo'q"); return; }
+  const id = Number(ctx.match![1]);
+  // deno-lint-ignore no-explicit-any
+  const { data: xo } = await supabase.from("xodimlar").select("arxiv").eq("id", id).maybeSingle() as { data: any | null };
+  const yangi = !(xo?.arxiv);
+  await supabase.from("xodimlar").update({
+    arxiv: yangi, arxiv_sana: yangi ? sanaTashkent() : null,
+  }).eq("id", id);
+  await ctx.answerCallbackQuery(yangi ? "🗄 Arxivlandi" : "♻️ Tiklandi");
+  const k = await xodimKarta(id);
+  if (k) await ctx.editMessageText(k.text, { parse_mode: "HTML", reply_markup: k.kb }).catch(() => {});
 });
 
 // Xodim qo'shish — boshlash
@@ -1158,6 +1374,13 @@ bot.on("message:voice", async (ctx) => {
     const cJson = await cResp.json() as any;
     const kat = String(cJson.choices?.[0]?.message?.content ?? "boshqa").toLowerCase();
 
+    // Aniq bir xodim nomi aytilgan bo'lsa — kartani chiqar
+    const nomMos = await xodimIzla(savol);
+    if (nomMos) {
+      const k = await xodimKarta(nomMos.id);
+      if (k) { await ctx.reply(k.text, { parse_mode: "HTML" }); return; }
+    }
+
     if (kat.includes("bugun")) {
       await ctx.reply(await bugungiHisobot(), { parse_mode: "HTML" });
       try { const png = await davomatPng(sanaTashkent(), await davomatRows()); await ctx.replyWithPhoto(new InputFile(png, "davomat.png")); }
@@ -1191,6 +1414,29 @@ bot.on("message:voice", async (ctx) => {
 bot.on("message", async (ctx) => {
   // Xodim qo'shish oqimi — matn kiritish
   const t = ctx.message?.text?.trim();
+
+  // Xodim kartasi tahrir oqimi — matn kiritish
+  if (ctx.session.kartaStep && t) {
+    const id = ctx.session.kartaId!;
+    const step = ctx.session.kartaStep;
+    if (step === "telefon") {
+      await supabase.from("xodimlar").update({ telefon: t === "-" ? null : t.slice(0, 40) }).eq("id", id);
+    } else if (step === "izoh") {
+      await supabase.from("xodimlar").update({ izoh: t === "-" ? null : t.slice(0, 500) }).eq("id", id);
+    } else if (step === "ishga_kirgan" || step === "tug_sana") {
+      if (t !== "-" && !sanaTogri(t)) {
+        await ctx.reply("❌ Sana formati: YYYY-MM-DD (masalan 2025-03-01), yoki - (o'chirish).");
+        return;
+      }
+      await supabase.from("xodimlar").update({ [step]: t === "-" ? null : t }).eq("id", id);
+    }
+    ctx.session.kartaStep = undefined;
+    ctx.session.kartaId = undefined;
+    const k = await xodimKarta(id);
+    if (k) await ctx.reply(k.text, { parse_mode: "HTML", reply_markup: k.kb });
+    return;
+  }
+
   if (ctx.session.xodimStep && t) {
     if (ctx.session.xodimStep === "ism") {
       ctx.session.yangiIsm = t;
@@ -1403,6 +1649,21 @@ bot.on("message", async (ctx) => {
     );
     return;
   }
+  // "X haqida ayt" — ism bo'yicha karta (faqat boshqaruv huquqi bo'lsa)
+  if (t && (ruxsat(xu, "xodim_boshqaradi") || ruxsat(xu, "hisobot_koradi"))) {
+    const topilgan = await xodimIzla(t);
+    if (topilgan) {
+      const k = await xodimKarta(topilgan.id);
+      if (k) {
+        const kb = ruxsat(xu, "xodim_boshqaradi")
+          ? k.kb
+          : new InlineKeyboard(); // hisobot huquqi bo'lsa faqat ko'radi
+        await ctx.reply(k.text, { parse_mode: "HTML", reply_markup: kb });
+        return;
+      }
+    }
+  }
+
   const satr = [
     `👋 <b>Assalomu alaykum, ${esc(xu.ism)}!</b>`,
     "",
