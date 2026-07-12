@@ -131,10 +131,20 @@ async function xodimByTgId(tgId: number): Promise<any | null> {
   const { data, error } = await supabase
     .from("xodimlar").select("*").eq("telegram_id", tgId).eq("arxiv", false).maybeSingle();
   if (error) throw error;
-  return data;
+  if (!data) return null;
+  // Rol huquqlari (flaglar) biriktiriladi — ruxsatlar data-driven
+  // deno-lint-ignore no-explicit-any
+  const { data: rl } = await supabase.from("rollar")
+    .select("hisobot_koradi, xodim_boshqaradi, maosh_koradi, sinov_boshqaradi, davomat_tuzata_oladi, signal_oladi, sozlama_boshqaradi")
+    .eq("nom", data.rol).maybeSingle() as { data: any | null };
+  return { ...data, huquq: rl ?? {} };
 }
-const rahbarmi = (rol: string) => rol === "Nazoratchi" || rol === "Director";
 const superAdminmi = (id: number) => SUPER_ADMIN_IDS.includes(id);
+// Huquq tekshiruvi — super admin barchasiga ega, qolgani rollar flagidan
+// deno-lint-ignore no-explicit-any
+function ruxsat(x: any, flag: string): boolean {
+  return superAdminmi(x.telegram_id) || Boolean(x?.huquq?.[flag]);
+}
 // TEST REJIMI: bu ID'lar uchun cheksiz keldi/ketdi/tushlik, masofa/vaqt cheklovi tekshirilmaydi.
 // Production'dan oldin ro'yxatni bo'shatish kerak: const TEST_IDS: number[] = [];
 const TEST_IDS = [1318046590];
@@ -340,26 +350,28 @@ const TUGMA = {
   keldi: "🟢 Keldim", ketdi: "🔴 Ketdim",
   tushlikka: "🍽 Tushlikka", tushlikdan: "↩️ Tushlikdan keldim",
   hisobot: "📊 Hisobotlar", xodimlar: "👥 Xodimlar",
-  maosh: "💰 Maosh", sinov: "🧪 Sinov", admin: "⚙️ Super admin",
+  maosh: "💰 Maosh", sinov: "🧪 Sinov", admin: "⚙️ Sozlamalar",
   tuzat: "✏️ Davomat tuzatish",
 };
-function menuForAccess(rahbar: boolean, superAdmin: boolean, tuzatuvchi = false): Keyboard {
+// Menyu — faqat xodim huquqiga mos tugmalar (CEO ortiqcha tugma ko'rmaydi)
+// deno-lint-ignore no-explicit-any
+function menuFor(x: any): Keyboard {
   const kb = new Keyboard()
     .text(TUGMA.keldi).text(TUGMA.ketdi).row()
     .text(TUGMA.tushlikka).text(TUGMA.tushlikdan).row();
-  if (rahbar || superAdmin) {
-    kb.text(TUGMA.hisobot).text(TUGMA.xodimlar).row();
-    kb.text(TUGMA.maosh).text(TUGMA.sinov).row();
+  const b: string[] = [];
+  if (ruxsat(x, "hisobot_koradi")) b.push(TUGMA.hisobot);
+  if (ruxsat(x, "xodim_boshqaradi")) b.push(TUGMA.xodimlar);
+  if (ruxsat(x, "maosh_koradi")) b.push(TUGMA.maosh);
+  if (ruxsat(x, "sinov_boshqaradi")) b.push(TUGMA.sinov);
+  if (ruxsat(x, "davomat_tuzata_oladi")) b.push(TUGMA.tuzat);
+  if (ruxsat(x, "sozlama_boshqaradi")) b.push(TUGMA.admin);
+  for (let i = 0; i < b.length; i += 2) {
+    kb.text(b[i]);
+    if (b[i + 1]) kb.text(b[i + 1]);
+    kb.row();
   }
-  if (tuzatuvchi || superAdmin) kb.text(TUGMA.tuzat).row();
-  if (superAdmin) kb.text(TUGMA.admin).row();
   return kb.resized().persistent();
-}
-// Rol davomatni qo'lda tuzata oladimi (rollar.davomat_tuzata_oladi)
-async function rolTuzatadimi(rol: string): Promise<boolean> {
-  const { data } = await supabase.from("rollar")
-    .select("davomat_tuzata_oladi").eq("nom", rol).maybeSingle();
-  return Boolean(data?.davomat_tuzata_oladi);
 }
 
 // Raqamni ming ajratgichli formatlash: 1500000 -> "1 500 000"
@@ -370,6 +382,15 @@ function fmtSum(n: number): string {
 // HTML parse_mode uchun xavfsizlash (ism/matnda &, <, > bo'lsa xabar buzilmasin)
 function esc(s: unknown): string {
   return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// ── Sozlamalar (config) — oson o'zgartiriladigan qiymatlar ──
+async function cfgGet(kalit: string, def = ""): Promise<string> {
+  const { data } = await supabase.from("config").select("qiymat").eq("kalit", kalit).maybeSingle();
+  return (data?.qiymat ?? def) as string;
+}
+async function cfgSet(kalit: string, qiymat: string): Promise<void> {
+  await supabase.from("config").upsert({ kalit, qiymat }, { onConflict: "kalit" });
 }
 
 // QuickChart orqali grafik rasm URL (bepul, kalitsiz)
@@ -433,8 +454,8 @@ async function maoshBarUrl(): Promise<string | null> {
 }
 
 // deno-lint-ignore no-explicit-any
-async function anaMenu(x: any): Promise<Keyboard> {
-  return menuForAccess(rahbarmi(x.rol), superAdminmi(x.telegram_id), await rolTuzatadimi(x.rol));
+function anaMenu(x: any): Keyboard {
+  return menuFor(x);
 }
 function lokatsiyaKlaviatura(): Keyboard {
   return new Keyboard().requestLocation("📍 Lokatsiyani yuborish").resized().oneTime();
@@ -508,15 +529,12 @@ bot.command("start", async (ctx) => {
     );
     return;
   }
-  const superAdmin = superAdminmi(tgId);
-  const rahbar = rahbarmi(x.rol);
-  const tuzat = await rolTuzatadimi(x.rol);
-  const rolTavsif = superAdmin ? "Super admin — to'liq access" : rahbar ? `${x.rol} (rahbar)` : x.rol;
+  const rolTavsif = superAdminmi(tgId) ? "Super admin" : x.rol;
   await ctx.reply(
     `👋 <b>Assalomu alaykum, ${esc(x.ism)}!</b>\n\n` +
       `Lavozim:  <b>${esc(rolTavsif)}</b>\n\n` +
       "Quyidagi <b>menyu tugmalari</b> orqali davomat qiling 👇",
-    { parse_mode: "HTML", reply_markup: menuForAccess(rahbar, superAdmin, tuzat) },
+    { parse_mode: "HTML", reply_markup: menuFor(x) },
   );
 });
 
@@ -582,8 +600,8 @@ bot.hears(TUGMA.tushlikdan, async (ctx) => {
 bot.hears(TUGMA.hisobot, async (ctx) => {
   const x = await xodimByTgId(ctx.from!.id);
   if (!x) { await ctx.reply("Siz ro'yxatda yo'qsiz."); return; }
-  if (!rahbarmi(x.rol) && !superAdminmi(x.telegram_id)) {
-    await ctx.reply("Bu bo'lim faqat rahbarlar uchun.");
+  if (!ruxsat(x, "hisobot_koradi")) {
+    await ctx.reply("Bu bo'lim uchun ruxsatingiz yo'q.");
     return;
   }
   const matn = await bugungiHisobot();
@@ -602,7 +620,7 @@ bot.hears(TUGMA.hisobot, async (ctx) => {
 // Oylik davomat (har xodim necha kun ishladi)
 bot.callbackQuery("hisobot_oy", async (ctx) => {
   const x = await xodimByTgId(ctx.from!.id);
-  if (!x || (!rahbarmi(x.rol) && !superAdminmi(x.telegram_id))) {
+  if (!x || !ruxsat(x, "hisobot_koradi")) {
     await ctx.answerCallbackQuery("Ruxsat yo'q");
     return;
   }
@@ -629,7 +647,7 @@ bot.callbackQuery("hisobot_oy", async (ctx) => {
 // Davomat — Excel eksport
 bot.callbackQuery("davomat_export", async (ctx) => {
   const x = await xodimByTgId(ctx.from!.id);
-  if (!x || (!rahbarmi(x.rol) && !superAdminmi(x.telegram_id))) {
+  if (!x || !ruxsat(x, "hisobot_koradi")) {
     await ctx.answerCallbackQuery("Ruxsat yo'q");
     return;
   }
@@ -646,8 +664,8 @@ bot.callbackQuery("davomat_export", async (ctx) => {
 
 bot.hears(TUGMA.xodimlar, async (ctx) => {
   const x = await xodimByTgId(ctx.from!.id);
-  if (!x || (!rahbarmi(x.rol) && !superAdminmi(x.telegram_id))) {
-    await ctx.reply("Bu bo'lim faqat rahbarlar uchun.");
+  if (!x || !ruxsat(x, "xodim_boshqaradi")) {
+    await ctx.reply("Bu bo'lim uchun ruxsatingiz yo'q.");
     return;
   }
   const matn = await xodimlarRoyxati();
@@ -658,7 +676,7 @@ bot.hears(TUGMA.xodimlar, async (ctx) => {
 // Xodim qo'shish — boshlash
 bot.callbackQuery("xq_add", async (ctx) => {
   const x = await xodimByTgId(ctx.from!.id);
-  if (!x || (!rahbarmi(x.rol) && !superAdminmi(x.telegram_id))) {
+  if (!x || !ruxsat(x, "xodim_boshqaradi")) {
     await ctx.answerCallbackQuery("Ruxsat yo'q");
     return;
   }
@@ -690,7 +708,7 @@ bot.callbackQuery(/^xq_rol_(.+)$/, async (ctx) => {
 // Yangi rol (lavozim) yaratish — nomni so'raydi
 bot.callbackQuery("xq_yangirol", async (ctx) => {
   const x = await xodimByTgId(ctx.from!.id);
-  if (!x || (!rahbarmi(x.rol) && !superAdminmi(x.telegram_id))) {
+  if (!x || !ruxsat(x, "xodim_boshqaradi")) {
     await ctx.answerCallbackQuery("Ruxsat yo'q");
     return;
   }
@@ -705,8 +723,8 @@ bot.callbackQuery("xq_yangirol", async (ctx) => {
 // Maosh — oylik hisobot
 bot.hears(TUGMA.maosh, async (ctx) => {
   const x = await xodimByTgId(ctx.from!.id);
-  if (!x || (!rahbarmi(x.rol) && !superAdminmi(x.telegram_id))) {
-    await ctx.reply("Bu bo'lim faqat rahbarlar uchun.");
+  if (!x || !ruxsat(x, "maosh_koradi")) {
+    await ctx.reply("Bu bo'lim uchun ruxsatingiz yo'q.");
     return;
   }
   const oy = joriyOy();
@@ -738,7 +756,7 @@ bot.hears(TUGMA.maosh, async (ctx) => {
 // Maosh — CSV eksport
 bot.callbackQuery("maosh_export", async (ctx) => {
   const x = await xodimByTgId(ctx.from!.id);
-  if (!x || (!rahbarmi(x.rol) && !superAdminmi(x.telegram_id))) {
+  if (!x || !ruxsat(x, "maosh_koradi")) {
     await ctx.answerCallbackQuery("Ruxsat yo'q");
     return;
   }
@@ -759,8 +777,8 @@ bot.callbackQuery("maosh_export", async (ctx) => {
 // Sinov — ro'yxat + qo'shish
 bot.hears(TUGMA.sinov, async (ctx) => {
   const x = await xodimByTgId(ctx.from!.id);
-  if (!x || (!rahbarmi(x.rol) && !superAdminmi(x.telegram_id))) {
-    await ctx.reply("Bu bo'lim faqat rahbarlar uchun.");
+  if (!x || !ruxsat(x, "sinov_boshqaradi")) {
+    await ctx.reply("Bu bo'lim uchun ruxsatingiz yo'q.");
     return;
   }
   const matn = await sinovRoyxati();
@@ -770,7 +788,7 @@ bot.hears(TUGMA.sinov, async (ctx) => {
 
 bot.callbackQuery("sinov_add", async (ctx) => {
   const x = await xodimByTgId(ctx.from!.id);
-  if (!x || (!rahbarmi(x.rol) && !superAdminmi(x.telegram_id))) {
+  if (!x || !ruxsat(x, "sinov_boshqaradi")) {
     await ctx.answerCallbackQuery("Ruxsat yo'q");
     return;
   }
@@ -781,9 +799,121 @@ bot.callbackQuery("sinov_add", async (ctx) => {
   await ctx.reply("Sinovchi ismini kiriting:");
 });
 
+// ── Sozlamalar paneli (sozlama_boshqaradi / super admin) ──
+async function sozlamaMatn(): Promise<string> {
+  const video = await cfgGet("video_guruhga", "yoq");
+  const tatil = await cfgGet("tatil_yoq", "yoq");
+  const anomaliya = await cfgGet("anomaliya_kun", "3");
+  const sig = await cfgGet("signal_qabul", "");
+  let sigNom = "Super admin (birlamchi)";
+  if (sig) {
+    // deno-lint-ignore no-explicit-any
+    const { data: xo } = await supabase.from("xodimlar").select("ism").eq("telegram_id", Number(sig)).maybeSingle() as { data: any | null };
+    sigNom = xo?.ism ? `${xo.ism} (${sig})` : sig;
+  }
+  return [
+    "⚙️ <b>Sozlamalar</b>",
+    "",
+    `📹 Dumaloq video guruhga:  <b>${video === "ha" ? "YOQILGAN" : "O'CHIQ"}</b>`,
+    `🏖 Ta'til moduli:  <b>${tatil === "ha" ? "YOQILGAN" : "O'CHIQ"}</b>`,
+    `🔔 Anomaliya chegarasi:  <b>${anomaliya}</b> kun`,
+    `📩 Signal/xulosa qabul qiluvchi:  <b>${esc(sigNom)}</b>`,
+    "",
+    "O'zgartirish uchun tugmani bosing 👇",
+  ].join("\n");
+}
+function sozlamaKb(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("📹 Video guruhga", "cfg_video").text("🏖 Ta'til moduli", "cfg_tatil").row()
+    .text("📩 Signal qabul qiluvchi", "cfg_signal").row()
+    .text("🔐 Rol huquqlari", "cfg_rollar");
+}
 bot.hears(TUGMA.admin, async (ctx) => {
-  if (!superAdminmi(ctx.from!.id)) return;
-  await ctx.reply("⚙️ Super admin panel — to'liq access. Funksiyalar keyingi bosqichda.");
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || !ruxsat(x, "sozlama_boshqaradi")) { await ctx.reply("Bu bo'lim uchun ruxsatingiz yo'q."); return; }
+  await ctx.reply(await sozlamaMatn(), { parse_mode: "HTML", reply_markup: sozlamaKb() });
+});
+// Video / Ta'til yoq-o'chir
+bot.callbackQuery(/^cfg_(video|tatil)$/, async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || !ruxsat(x, "sozlama_boshqaradi")) { await ctx.answerCallbackQuery("Ruxsat yo'q"); return; }
+  const kalit = ctx.match![1] === "video" ? "video_guruhga" : "tatil_yoq";
+  const hozir = await cfgGet(kalit, "yoq");
+  await cfgSet(kalit, hozir === "ha" ? "yoq" : "ha");
+  await ctx.answerCallbackQuery("Saqlandi");
+  try {
+    await ctx.editMessageText(await sozlamaMatn(), { parse_mode: "HTML", reply_markup: sozlamaKb() });
+  } catch (_e) { /* o'zgarmagan bo'lsa e'tibor bermaymiz */ }
+});
+// Signal/xulosa qabul qiluvchini tanlash
+bot.callbackQuery("cfg_signal", async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || !ruxsat(x, "sozlama_boshqaradi")) { await ctx.answerCallbackQuery("Ruxsat yo'q"); return; }
+  // deno-lint-ignore no-explicit-any
+  const { data } = await supabase.from("xodimlar").select("telegram_id, ism").eq("arxiv", false).order("ism") as { data: any[] | null };
+  const kb = new InlineKeyboard();
+  (data ?? []).forEach((xo, i) => { kb.text(xo.ism, `sig_${xo.telegram_id}`); if (i % 2 === 1) kb.row(); });
+  kb.row().text("↩️ Birlamchi (super admin)", "sig_0");
+  await ctx.answerCallbackQuery();
+  await ctx.reply("📩 Signal/xulosani kim qabul qilsin?", { reply_markup: kb });
+});
+bot.callbackQuery(/^sig_(\d+)$/, async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || !ruxsat(x, "sozlama_boshqaradi")) { await ctx.answerCallbackQuery("Ruxsat yo'q"); return; }
+  const tgid = ctx.match![1];
+  await cfgSet("signal_qabul", tgid === "0" ? "" : tgid);
+  await ctx.answerCallbackQuery("Saqlandi");
+  await ctx.reply("✅ Signal qabul qiluvchi yangilandi.\n\n" + await sozlamaMatn(), { parse_mode: "HTML", reply_markup: sozlamaKb() });
+});
+// Rol huquqlari — lavozim tanlash
+const HUQUQLAR: [string, string][] = [
+  ["hisobot_koradi", "Hisobot ko'radi"],
+  ["xodim_boshqaradi", "Xodim boshqaradi"],
+  ["maosh_koradi", "Maosh ko'radi"],
+  ["sinov_boshqaradi", "Sinov boshqaradi"],
+  ["davomat_tuzata_oladi", "Davomat tuzatadi"],
+  ["signal_oladi", "Signal/xulosa oladi"],
+  ["sozlama_boshqaradi", "Sozlama boshqaradi"],
+];
+async function rolHuquqKb(rol: string): Promise<InlineKeyboard> {
+  // deno-lint-ignore no-explicit-any
+  const { data } = await supabase.from("rollar").select("*").eq("nom", rol).maybeSingle() as { data: any | null };
+  const kb = new InlineKeyboard();
+  for (const [flag, nom] of HUQUQLAR) {
+    const on = Boolean(data?.[flag]);
+    kb.text(`${on ? "✅" : "⬜"} ${nom}`, `rf|${rol}|${flag}`).row();
+  }
+  return kb;
+}
+bot.callbackQuery("cfg_rollar", async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || !ruxsat(x, "sozlama_boshqaradi")) { await ctx.answerCallbackQuery("Ruxsat yo'q"); return; }
+  const roles = await rollarList();
+  const kb = new InlineKeyboard();
+  roles.forEach((r, i) => { kb.text(r, `rp|${r}`); if (i % 2 === 1) kb.row(); });
+  await ctx.answerCallbackQuery();
+  await ctx.reply("🔐 Qaysi lavozim huquqlarini o'zgartiramiz?", { reply_markup: kb });
+});
+bot.callbackQuery(/^rp\|(.+)$/, async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || !ruxsat(x, "sozlama_boshqaradi")) { await ctx.answerCallbackQuery("Ruxsat yo'q"); return; }
+  const rol = ctx.match![1];
+  await ctx.answerCallbackQuery();
+  await ctx.reply(`🔐 <b>${esc(rol)}</b> — huquqlar (bosib yoq/o'chir):`, { parse_mode: "HTML", reply_markup: await rolHuquqKb(rol) });
+});
+bot.callbackQuery(/^rf\|(.+)\|([a-z_]+)$/, async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || !ruxsat(x, "sozlama_boshqaradi")) { await ctx.answerCallbackQuery("Ruxsat yo'q"); return; }
+  const rol = ctx.match![1];
+  const flag = ctx.match![2];
+  // deno-lint-ignore no-explicit-any
+  const { data } = await supabase.from("rollar").select(flag).eq("nom", rol).maybeSingle() as { data: any | null };
+  const yangi = !Boolean(data?.[flag]);
+  await supabase.from("rollar").update({ [flag]: yangi }).eq("nom", rol);
+  await ctx.answerCallbackQuery(yangi ? "Yoqildi" : "O'chirildi");
+  try {
+    await ctx.editMessageReplyMarkup({ reply_markup: await rolHuquqKb(rol) });
+  } catch (_e) { /* skip */ }
 });
 
 // ── Davomatni qo'lda tuzatish (HR roli / super admin) ─────
@@ -798,8 +928,8 @@ async function tuzatXodimKb(): Promise<InlineKeyboard> {
 bot.hears(TUGMA.tuzat, async (ctx) => {
   const x = await xodimByTgId(ctx.from!.id);
   if (!x) { await ctx.reply("Siz ro'yxatda yo'qsiz."); return; }
-  if (!superAdminmi(x.telegram_id) && !(await rolTuzatadimi(x.rol))) {
-    await ctx.reply("Bu bo'lim faqat HR / davomat mas'uli uchun.");
+  if (!ruxsat(x, "davomat_tuzata_oladi")) {
+    await ctx.reply("Bu bo'lim faqat davomat mas'uli (HR) uchun.");
     return;
   }
   const kb = await tuzatXodimKb();
@@ -807,7 +937,7 @@ bot.hears(TUGMA.tuzat, async (ctx) => {
 });
 bot.callbackQuery(/^tz_pick_(\d+)$/, async (ctx) => {
   const x = await xodimByTgId(ctx.from!.id);
-  if (!x || (!superAdminmi(x.telegram_id) && !(await rolTuzatadimi(x.rol)))) {
+  if (!x || !ruxsat(x, "davomat_tuzata_oladi")) {
     await ctx.answerCallbackQuery("Ruxsat yo'q");
     return;
   }
@@ -835,7 +965,7 @@ function tuzatHolatKb(): InlineKeyboard {
 // Ruxsat + sessiya tekshiruvi (tuzatish callbacklari uchun)
 async function tuzatRuxsat(ctx: Ctx): Promise<boolean> {
   const x = await xodimByTgId(ctx.from!.id);
-  if (!x || (!superAdminmi(x.telegram_id) && !(await rolTuzatadimi(x.rol)))) {
+  if (!x || !ruxsat(x, "davomat_tuzata_oladi")) {
     await ctx.answerCallbackQuery("Ruxsat yo'q");
     return false;
   }
@@ -947,6 +1077,21 @@ bot.on("message:video_note", async (ctx) => {
     const emoji = holat === "Kech qoldi" ? "🟠" : "🟢";
     const izoh = holat === "Kech qoldi" ? " — <i>kech qoldi</i>" : "";
     await davomatXulosa(`${emoji} <b>${esc(x.ism)}</b> keldi · <b>${soatMatn(now)}</b>${izoh}`);
+    // Dumaloq video guruhga (config bilan yoqiladi)
+    if ((await cfgGet("video_guruhga", "yoq")) === "ha") {
+      // deno-lint-ignore no-explicit-any
+      const { data: cf } = await supabase.from("config").select("kalit, qiymat").in("kalit", ["xulosa_group_id", "xulosa_topic_id"]) as { data: any[] | null };
+      const cmap = new Map<string, string>((cf ?? []).map((r) => [r.kalit, r.qiymat]));
+      const g = cmap.get("xulosa_group_id");
+      const tp = cmap.get("xulosa_topic_id");
+      try {
+        if (g) {
+          await bot.api.sendVideoNote(g, vn.file_id, tp ? { message_thread_id: Number(tp) } : {});
+        } else {
+          await bot.api.sendVideoNote(GROUP_CHAT_ID_2, vn.file_id, { message_thread_id: GROUP_TOPIC_ID_2 });
+        }
+      } catch (e) { console.error("video guruh:", e); }
+    }
   } else {
     const { data, error } = await supabase.from("davomat").update({
       ketdi: now.toISOString(), video_file_id: vn.file_id,
@@ -969,8 +1114,8 @@ bot.on("message:video_note", async (ctx) => {
 // Ovozli savol (rahbar/super admin) — Whisper + AI niyat + vizual javob
 bot.on("message:voice", async (ctx) => {
   const x = await xodimByTgId(ctx.from!.id);
-  if (!x || (!rahbarmi(x.rol) && !superAdminmi(x.telegram_id))) {
-    await ctx.reply("Ovozli savol faqat rahbarlar uchun.");
+  if (!x || !ruxsat(x, "hisobot_koradi")) {
+    await ctx.reply("Ovozli savol faqat boshqaruv uchun.");
     return;
   }
   const key = await openaiKalit();
@@ -1258,9 +1403,6 @@ bot.on("message", async (ctx) => {
     );
     return;
   }
-  const fbSuper = superAdminmi(xu.telegram_id);
-  const fbRahbar = rahbarmi(xu.rol);
-  const fbTuzat = await rolTuzatadimi(xu.rol);
   const satr = [
     `👋 <b>Assalomu alaykum, ${esc(xu.ism)}!</b>`,
     "",
@@ -1269,16 +1411,15 @@ bot.on("message", async (ctx) => {
     "🟢 <b>Keldim</b>   /   🔴 <b>Ketdim</b>",
     "🍽 <b>Tushlikka</b>   /   ↩️ <b>Tushlikdan keldim</b>",
   ];
-  if (fbRahbar || fbSuper) {
+  if (ruxsat(xu, "hisobot_koradi") || ruxsat(xu, "xodim_boshqaradi") || ruxsat(xu, "maosh_koradi") || ruxsat(xu, "sinov_boshqaradi")) {
     satr.push("");
-    satr.push("📊 <b>Hisobotlar</b>   ·   👥 <b>Xodimlar</b>");
-    satr.push("💰 <b>Maosh</b>   ·   🧪 <b>Sinov</b>");
+    satr.push("Boshqaruv bo'limlari ham menyuдa 👇");
   }
   satr.push("");
   satr.push("Kerakli tugmani bosing yoki <b>/start</b> yuboring 👇");
   await ctx.reply(satr.join("\n"), {
     parse_mode: "HTML",
-    reply_markup: menuForAccess(fbRahbar, fbSuper, fbTuzat),
+    reply_markup: menuFor(xu),
   });
 });
 
