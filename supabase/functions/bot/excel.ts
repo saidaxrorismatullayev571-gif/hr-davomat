@@ -5,6 +5,7 @@ const NAVY = "FF0E2A47", NAVY2 = "FF1C3E68", HEADBLUE = "FF1E79C4";
 const ORANGE_BG = "FFFCEBD6", ORANGE_FG = "FFD98324";
 const OKBG = "FFE4F5EA", OKFG = "FF2E9E5B", WARNBG = "FFFDF0DE", WARNFG = "FFE6902A";
 const BADBG = "FFFBE7EB", BADFG = "FFD5556A", AUTOBG = "FFE7F0FB", AUTOFG = "FF2E86D6";
+const KASALBG = "FFF1E7FB", KASALFG = "FF7C3AED", SABBG = "FFE9EDF3", SABFG = "FF5B6B82";
 const TOTBG = "FFEAF3FC", ZEBRA = "FFF7FAFD";
 
 // deno-lint-ignore no-explicit-any
@@ -79,6 +80,7 @@ export async function davomatXlsx(sana: string, rows: DavomatXRow[]): Promise<Ui
 
   const holatRang: Record<string, [string, string]> = {
     "Vaqtida": [OKBG, OKFG], "Kech qoldi": [WARNBG, WARNFG], "Avtomatik": [AUTOBG, AUTOFG],
+    "Kasal": [KASALBG, KASALFG], "Sababli": [SABBG, SABFG],
   };
   rows.forEach((r, i) => {
     const holat = r.holat ?? "Kelmadi";

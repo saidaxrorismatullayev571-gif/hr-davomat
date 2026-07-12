@@ -39,16 +39,20 @@ begin
   -- HTML bold + holatga qarab rang (parse_mode=HTML). Ism xavfsizlangan (&,<,>).
   select '📊 <b>Kunlik davomat</b> — ' || to_char(d_sana, 'YYYY-MM-DD') || E'\n\n' ||
     coalesce(string_agg(
-      case when x.keldi is not null then
-        (case when x.holat = 'Kech qoldi' then '🟠 '
-              when x.holat = 'Avtomatik'  then '🔵 '
-              else '🟢 ' end)
-        || '<b>' || x.ism_esc || '</b> · '
-        || to_char(x.keldi at time zone 'Asia/Tashkent','HH24:MI') || '–'
-        || coalesce(to_char(x.ketdi at time zone 'Asia/Tashkent','HH24:MI'),'—')
-        || ' · <b>' || round(x.sof_min/60.0,1) || 's</b>'
-        || (case when x.holat = 'Kech qoldi' then ' <i>(kech)</i>' else '' end)
-      else '⬜ <b>' || x.ism_esc || '</b> — kelmadi' end,
+      case
+        when x.keldi is not null then
+          (case when x.holat = 'Kech qoldi' then '🟠 '
+                when x.holat = 'Avtomatik'  then '🔵 '
+                else '🟢 ' end)
+          || '<b>' || x.ism_esc || '</b> · '
+          || to_char(x.keldi at time zone 'Asia/Tashkent','HH24:MI') || '–'
+          || coalesce(to_char(x.ketdi at time zone 'Asia/Tashkent','HH24:MI'),'—')
+          || ' · <b>' || round(x.sof_min/60.0,1) || 's</b>'
+          || (case when x.holat = 'Kech qoldi' then ' <i>(kech)</i>' else '' end)
+        when x.holat = 'Kasal'   then '🤒 <b>' || x.ism_esc || '</b> — kasal'
+        when x.holat = 'Sababli' then '📄 <b>' || x.ism_esc || '</b> — sababli'
+        else '⬜ <b>' || x.ism_esc || '</b> — kelmadi'
+      end,
       E'\n' order by x.ism), '')
     || E'\n\n👥 Jami: <b>' || count(*) filter (where x.keldi is not null) || '/' || count(*) || '</b> keldi'
   into txt

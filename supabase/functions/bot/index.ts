@@ -174,6 +174,10 @@ async function bugungiHisobot(): Promise<string> {
       const soat = (d.sof_min / 60).toFixed(1);
       const rangi = d.holat === "Kech qoldi" ? "🟠" : d.holat === "Avtomatik" ? "🔵" : "🟢";
       qatorlar.push(`${rangi} <b>${esc(x.ism)}</b> · ${keldi}–${ketdi} · <b>${soat}s</b>`);
+    } else if (d?.holat === "Kasal") {
+      qatorlar.push(`🤒 <b>${esc(x.ism)}</b> — kasal`);
+    } else if (d?.holat === "Sababli") {
+      qatorlar.push(`📄 <b>${esc(x.ism)}</b> — sababli`);
     } else {
       qatorlar.push(`⬜ <b>${esc(x.ism)}</b> — kelmadi`);
     }
@@ -204,7 +208,7 @@ async function davomatRows(): Promise<DavomatRow[]> {
         holat: d.holat ?? "Vaqtida",
       };
     }
-    return { ism: x.ism, keldi: "—", ketdi: "—", soat: null, holat: null };
+    return { ism: x.ism, keldi: "—", ketdi: "—", soat: null, holat: d?.holat ?? null };
   });
 }
 
@@ -821,6 +825,61 @@ bot.callbackQuery(/^tz_pick_(\d+)$/, async (ctx) => {
     { parse_mode: "HTML" },
   );
 });
+// Sana'dan keyin holat tanlash tugmalari
+function tuzatHolatKb(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("🟢 Keldi (vaqt kiritish)", "tz_h_keldi").row()
+    .text("🤒 Kasal", "tz_h_kasal").text("📄 Sababli", "tz_h_sababli").row()
+    .text("⬜ Kelmadi", "tz_h_kelmadi");
+}
+// Ruxsat + sessiya tekshiruvi (tuzatish callbacklari uchun)
+async function tuzatRuxsat(ctx: Ctx): Promise<boolean> {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || (!superAdminmi(x.telegram_id) && !(await rolTuzatadimi(x.rol)))) {
+    await ctx.answerCallbackQuery("Ruxsat yo'q");
+    return false;
+  }
+  if (!ctx.session.tuzatTgId || !ctx.session.tuzatSana) {
+    await ctx.answerCallbackQuery("Ma'lumot yo'q, qaytadan boshlang.");
+    return false;
+  }
+  return true;
+}
+// "Keldi" tanlansa — vaqt so'raladi
+bot.callbackQuery("tz_h_keldi", async (ctx) => {
+  if (!(await tuzatRuxsat(ctx))) return;
+  ctx.session.tuzatStep = "keldi";
+  await ctx.answerCallbackQuery();
+  await ctx.reply("🟢 <b>Kelgan vaqti</b>ni kiriting (HH:MM, masalan <b>09:00</b>):", { parse_mode: "HTML" });
+});
+// Kasal / Sababli / Kelmadi — darhol belgilanadi (keldi/ketdi bo'sh, sof_min=0)
+const HOLAT_MAP: Record<string, string> = { kasal: "Kasal", sababli: "Sababli", kelmadi: "Kelmadi" };
+bot.callbackQuery(/^tz_h_(kasal|sababli|kelmadi)$/, async (ctx) => {
+  if (!(await tuzatRuxsat(ctx))) return;
+  const holat = HOLAT_MAP[ctx.match![1]];
+  const tgid = ctx.session.tuzatTgId!;
+  const sana = ctx.session.tuzatSana!;
+  const ism = ctx.session.tuzatIsm ?? String(tgid);
+  const { error } = await supabase.from("davomat").upsert(
+    { telegram_id: tgid, sana, keldi: null, tushlikka: null, qaytdi: null, ketdi: null, holat },
+    { onConflict: "telegram_id,sana" },
+  );
+  ctx.session.tuzatStep = undefined;
+  ctx.session.tuzatTgId = undefined;
+  ctx.session.tuzatIsm = undefined;
+  ctx.session.tuzatSana = undefined;
+  ctx.session.tuzatKeldi = undefined;
+  await ctx.answerCallbackQuery();
+  if (error) { await ctx.reply("❌ Saqlashda xato: " + error.message); return; }
+  const emoji = holat === "Kasal" ? "🤒" : holat === "Sababli" ? "📄" : "⬜";
+  await ctx.reply(
+    "✅ <b>Belgilandi</b>\n\n" +
+      `👤 <b>${esc(ism)}</b>\n` +
+      `📅 Sana:  <b>${sana}</b>\n` +
+      `${emoji} Holat:  <b>${esc(holat)}</b>`,
+    { parse_mode: "HTML" },
+  );
+});
 
 // Lokatsiya bosqichi
 bot.on("message:location", async (ctx) => {
@@ -1135,8 +1194,11 @@ bot.on("message", async (ctx) => {
       const s = t.toLowerCase() === "bugun" ? sanaTashkent() : t;
       if (!sanaTogri(s)) { await ctx.reply("❌ Sana formati noto'g'ri. YYYY-MM-DD (masalan 2026-07-12) yoki 'bugun' yozing."); return; }
       ctx.session.tuzatSana = s;
-      ctx.session.tuzatStep = "keldi";
-      await ctx.reply(`Sana:  <b>${s}</b>\n\n🟢 <b>Kelgan vaqti</b>ni kiriting (HH:MM, masalan <b>09:00</b>):`, { parse_mode: "HTML" });
+      ctx.session.tuzatStep = undefined;
+      await ctx.reply(
+        `Sana:  <b>${s}</b>\n\n<b>Holatni tanlang:</b>`,
+        { parse_mode: "HTML", reply_markup: tuzatHolatKb() },
+      );
       return;
     }
     if (ctx.session.tuzatStep === "keldi") {

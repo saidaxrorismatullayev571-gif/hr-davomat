@@ -54,11 +54,14 @@ async function toPng(markup: string, width: number, height: number): Promise<Uin
 const PCT: Record<string, [string, string]> = {
   ok: ["#E4F5EA", "#2E9E5B"], warn: ["#FDF0DE", "#E6902A"],
   bad: ["#FBE7EB", "#D5556A"], auto: ["#E7F0FB", "#2E86D6"],
+  kasal: ["#F1E7FB", "#7C3AED"], sababli: ["#E9EDF3", "#5B6B82"],
 };
 function holatKey(h: string | null): string {
-  if (!h) return "bad";
+  if (!h || h === "Kelmadi") return "bad";
   if (h === "Kech qoldi") return "warn";
   if (h === "Avtomatik") return "auto";
+  if (h === "Kasal") return "kasal";
+  if (h === "Sababli") return "sababli";
   return "ok";
 }
 function gauge(pct: number): string {
