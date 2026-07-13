@@ -474,6 +474,33 @@ function esc(s: unknown): string {
   return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+// ── Jurnal (audit log) — har bir muhim harakat shu yerga yoziladi, hech qachon o'chirilmaydi ──
+async function jurnalYoz(
+  kimTgId: number | undefined,
+  kimIsm: string | undefined,
+  harakat: string,
+  jadval?: string,
+  yozuvId?: string | number,
+  tafsilot?: string,
+  oldingi?: unknown,
+  yangi?: unknown,
+): Promise<void> {
+  try {
+    await supabase.from("jurnal").insert({
+      kim_tg_id: kimTgId ?? null,
+      kim_ism: kimIsm ?? null,
+      harakat,
+      jadval: jadval ?? null,
+      yozuv_id: yozuvId != null ? String(yozuvId) : null,
+      tafsilot: tafsilot ?? null,
+      oldingi: oldingi ?? null,
+      yangi: yangi ?? null,
+    });
+  } catch (e) {
+    console.error("jurnal yozishda xato:", e);
+  }
+}
+
 // ── Sozlamalar (config) — oson o'zgartiriladigan qiymatlar ──
 async function cfgGet(kalit: string, def = ""): Promise<string> {
   const { data } = await supabase.from("config").select("qiymat").eq("kalit", kalit).maybeSingle();
@@ -672,6 +699,7 @@ bot.hears(TUGMA.tushlikka, async (ctx) => {
   const now = new Date();
   await supabase.from("davomat").update({ tushlikka: now.toISOString() })
     .eq("telegram_id", x.telegram_id).eq("sana", sanaTashkent());
+  jurnalYoz(x.telegram_id, x.ism, "tushlikka", "davomat", sanaTashkent(), soatMatn(now));
   await ctx.reply(`🍽 Tushlik boshlandi: <b>${soatMatn(now)}</b>. Qaytganda "Tushlikdan keldim" bosing.`, { parse_mode: "HTML" });
 });
 
@@ -684,6 +712,7 @@ bot.hears(TUGMA.tushlikdan, async (ctx) => {
   const now = new Date();
   await supabase.from("davomat").update({ qaytdi: now.toISOString() })
     .eq("telegram_id", x.telegram_id).eq("sana", sanaTashkent());
+  jurnalYoz(x.telegram_id, x.ism, "tushlikdan_qaytdi", "davomat", sanaTashkent(), soatMatn(now));
   await ctx.reply(`↩️ Tushlikdan qaytdingiz: <b>${soatMatn(now)}</b>.`, { parse_mode: "HTML" });
 });
 
@@ -848,6 +877,7 @@ bot.callbackQuery(/^xkdt_(\d+)_(\d)$/, async (ctx) => {
   set.has(d) ? set.delete(d) : set.add(d);
   const yangi = [...set].sort((a, b) => a - b);
   await supabase.from("xodimlar").update({ dam_kunlar: yangi }).eq("id", id);
+  jurnalYoz(x.telegram_id, x.ism, "dam_kun_ozgardi", "xodimlar", id, `${KUN_NOM[d]} ${set.has(d) ? "yoqildi" : "o'chirildi"}`, { dam_kunlar: xo?.dam_kunlar ?? [] }, { dam_kunlar: yangi });
   await ctx.answerCallbackQuery(KUN_NOM[d] + (set.has(d) ? " ✅" : " ❌"));
   await ctx.editMessageReplyMarkup({ reply_markup: damKunKb(id, yangi) }).catch(() => {});
 });
@@ -867,7 +897,10 @@ bot.callbackQuery(/^xkrs_(\d+)_(.+)$/, async (ctx) => {
   if (!x || !ruxsat(x, "xodim_boshqaradi")) { await ctx.answerCallbackQuery("Ruxsat yo'q"); return; }
   const id = Number(ctx.match![1]);
   const rol = ctx.match![2];
+  // deno-lint-ignore no-explicit-any
+  const { data: eski } = await supabase.from("xodimlar").select("rol, ism").eq("id", id).maybeSingle() as { data: any | null };
   await supabase.from("xodimlar").update({ rol }).eq("id", id);
+  jurnalYoz(x.telegram_id, x.ism, "rol_ozgardi", "xodimlar", id, `${esc(eski?.ism)}: ${eski?.rol} → ${rol}`, { rol: eski?.rol }, { rol });
   await ctx.answerCallbackQuery("✅ Rol: " + rol);
   const k = await xodimKarta(id);
   if (k) await ctx.editMessageText(k.text, { parse_mode: "HTML", reply_markup: k.kb }).catch(() => {});
@@ -879,11 +912,12 @@ bot.callbackQuery(/^xka_(\d+)$/, async (ctx) => {
   if (!x || !ruxsat(x, "xodim_boshqaradi")) { await ctx.answerCallbackQuery("Ruxsat yo'q"); return; }
   const id = Number(ctx.match![1]);
   // deno-lint-ignore no-explicit-any
-  const { data: xo } = await supabase.from("xodimlar").select("arxiv").eq("id", id).maybeSingle() as { data: any | null };
+  const { data: xo } = await supabase.from("xodimlar").select("arxiv, ism").eq("id", id).maybeSingle() as { data: any | null };
   const yangi = !(xo?.arxiv);
   await supabase.from("xodimlar").update({
     arxiv: yangi, arxiv_sana: yangi ? sanaTashkent() : null,
   }).eq("id", id);
+  jurnalYoz(x.telegram_id, x.ism, yangi ? "arxivladi" : "tiklandi", "xodimlar", id, esc(xo?.ism));
   await ctx.answerCallbackQuery(yangi ? "🗄 Arxivlandi" : "♻️ Tiklandi");
   const k = await xodimKarta(id);
   if (k) await ctx.editMessageText(k.text, { parse_mode: "HTML", reply_markup: k.kb }).catch(() => {});
@@ -918,6 +952,8 @@ bot.callbackQuery(/^xq_rol_(.+)$/, async (ctx) => {
   ctx.session.yangiTgId = undefined;
   await ctx.answerCallbackQuery();
   if (err) { await ctx.reply("❌ Xato: " + err); return; }
+  const kim = await xodimByTgId(ctx.from!.id);
+  jurnalYoz(kim?.telegram_id, kim?.ism, "xodim_qoshdi", "xodimlar", tgid, `${ism} — ${rol}`, null, { ism, rol, telegram_id: tgid });
   await ctx.reply(`✅ Qo'shildi: <b>${esc(ism)}</b> — ${esc(rol)} (ID ${tgid})`, { parse_mode: "HTML" });
 });
 
@@ -1042,8 +1078,55 @@ function sozlamaKb(): InlineKeyboard {
   return new InlineKeyboard()
     .text("📹 Video guruhga", "cfg_video").text("🏖 Ta'til moduli", "cfg_tatil").row()
     .text("📩 Signal qabul qiluvchi", "cfg_signal").row()
-    .text("🔐 Rol huquqlari", "cfg_rollar");
+    .text("🔐 Rol huquqlari", "cfg_rollar").row()
+    .text("🧾 Jurnal (oxirgi harakatlar)", "cfg_jurnal|0");
 }
+
+// Jurnal (audit log) ko'rish — 15 tadan sahifalab, eng yangisi tepada
+const JURNAL_HARAKAT_EMOJI: Record<string, string> = {
+  keldi: "🟢", ketdi: "🔴", tushlikka: "🍽", tushlikdan_qaytdi: "↩️",
+  xodim_qoshdi: "➕", rol_ozgardi: "🔄", arxivladi: "🗄", tiklandi: "♻️",
+  dam_kun_ozgardi: "🛏", karta_tahrir: "✏️", sozlama_ozgardi: "⚙️",
+  rol_huquq_ozgardi: "🔐", davomat_tuzatildi: "🛠",
+};
+async function jurnalMatn(sahifa: number): Promise<{ text: string; bor_keyingi: boolean }> {
+  const LIMIT = 15;
+  // deno-lint-ignore no-explicit-any
+  const { data } = await supabase.from("jurnal").select("*")
+    .order("vaqt", { ascending: false })
+    .range(sahifa * LIMIT, sahifa * LIMIT + LIMIT) as { data: any[] | null };
+  const rows = data ?? [];
+  const borKeyingi = rows.length > LIMIT;
+  const korsat = rows.slice(0, LIMIT);
+  if (!korsat.length) return { text: "🧾 <b>Jurnal</b>\n\nHozircha yozuv yo'q.", bor_keyingi: false };
+  const qatorlar = ["🧾 <b>Jurnal — oxirgi harakatlar</b>", ""];
+  for (const j of korsat) {
+    const vaqt = new Date(j.vaqt).toLocaleString("uz-UZ", { timeZone: TZ, day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+    const emoji = JURNAL_HARAKAT_EMOJI[j.harakat] ?? "•";
+    const kim = esc(j.kim_ism ?? j.kim_tg_id ?? "noma'lum");
+    const tafsilot = j.tafsilot ? ` — ${esc(j.tafsilot)}` : "";
+    qatorlar.push(`${emoji} <b>${vaqt}</b> · ${kim} · <i>${esc(j.harakat)}</i>${tafsilot}`);
+  }
+  return { text: qatorlar.join("\n"), bor_keyingi: borKeyingi };
+}
+function jurnalKb(sahifa: number, borKeyingi: boolean): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  if (sahifa > 0) kb.text("⬅️ Oldingi", `cfg_jurnal|${sahifa - 1}`);
+  if (borKeyingi) kb.text("Keyingi ➡️", `cfg_jurnal|${sahifa + 1}`);
+  return kb;
+}
+bot.callbackQuery(/^cfg_jurnal\|(\d+)$/, async (ctx) => {
+  const x = await xodimByTgId(ctx.from!.id);
+  if (!x || !ruxsat(x, "sozlama_boshqaradi")) { await ctx.answerCallbackQuery("Ruxsat yo'q"); return; }
+  const sahifa = Number(ctx.match![1]);
+  const { text, bor_keyingi } = await jurnalMatn(sahifa);
+  await ctx.answerCallbackQuery();
+  try {
+    await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: jurnalKb(sahifa, bor_keyingi) });
+  } catch (_e) {
+    await ctx.reply(text, { parse_mode: "HTML", reply_markup: jurnalKb(sahifa, bor_keyingi) });
+  }
+});
 bot.hears(TUGMA.admin, async (ctx) => {
   const x = await xodimByTgId(ctx.from!.id);
   if (!x || !ruxsat(x, "sozlama_boshqaradi")) { await ctx.reply("Bu bo'lim uchun ruxsatingiz yo'q."); return; }
@@ -1055,7 +1138,9 @@ bot.callbackQuery(/^cfg_(video|tatil)$/, async (ctx) => {
   if (!x || !ruxsat(x, "sozlama_boshqaradi")) { await ctx.answerCallbackQuery("Ruxsat yo'q"); return; }
   const kalit = ctx.match![1] === "video" ? "video_guruhga" : "tatil_yoq";
   const hozir = await cfgGet(kalit, "yoq");
-  await cfgSet(kalit, hozir === "ha" ? "yoq" : "ha");
+  const yangi = hozir === "ha" ? "yoq" : "ha";
+  await cfgSet(kalit, yangi);
+  jurnalYoz(x.telegram_id, x.ism, "sozlama_ozgardi", "config", kalit, `${kalit}: ${hozir} → ${yangi}`, { qiymat: hozir }, { qiymat: yangi });
   await ctx.answerCallbackQuery("Saqlandi");
   try {
     await ctx.editMessageText(await sozlamaMatn(), { parse_mode: "HTML", reply_markup: sozlamaKb() });
@@ -1078,6 +1163,7 @@ bot.callbackQuery(/^sig_(\d+)$/, async (ctx) => {
   if (!x || !ruxsat(x, "sozlama_boshqaradi")) { await ctx.answerCallbackQuery("Ruxsat yo'q"); return; }
   const tgid = ctx.match![1];
   await cfgSet("signal_qabul", tgid === "0" ? "" : tgid);
+  jurnalYoz(x.telegram_id, x.ism, "sozlama_ozgardi", "config", "signal_qabul", `signal_qabul → ${tgid}`);
   await ctx.answerCallbackQuery("Saqlandi");
   await ctx.reply("✅ Signal qabul qiluvchi yangilandi.\n\n" + await sozlamaMatn(), { parse_mode: "HTML", reply_markup: sozlamaKb() });
 });
@@ -1126,6 +1212,7 @@ bot.callbackQuery(/^rf\|(.+)\|([a-z_]+)$/, async (ctx) => {
   const { data } = await supabase.from("rollar").select(flag).eq("nom", rol).maybeSingle() as { data: any | null };
   const yangi = !Boolean(data?.[flag]);
   await supabase.from("rollar").update({ [flag]: yangi }).eq("nom", rol);
+  jurnalYoz(x.telegram_id, x.ism, "rol_huquq_ozgardi", "rollar", rol, `${rol}.${flag} → ${yangi}`, { [flag]: !yangi }, { [flag]: yangi });
   await ctx.answerCallbackQuery(yangi ? "Yoqildi" : "O'chirildi");
   try {
     await ctx.editMessageReplyMarkup({ reply_markup: await rolHuquqKb(rol) });
@@ -1217,6 +1304,8 @@ bot.callbackQuery(/^tz_h_(kasal|sababli|kelmadi)$/, async (ctx) => {
   ctx.session.tuzatKeldi = undefined;
   await ctx.answerCallbackQuery();
   if (error) { await ctx.reply("❌ Saqlashda xato: " + error.message); return; }
+  const kim = await xodimByTgId(ctx.from!.id);
+  jurnalYoz(kim?.telegram_id, kim?.ism, "davomat_tuzatildi", "davomat", `${tgid}_${sana}`, `${ism} — ${sana} — ${holat}`, null, { holat, sana });
   const emoji = holat === "Kasal" ? "🤒" : holat === "Sababli" ? "📄" : "⬜";
   await ctx.reply(
     "✅ <b>Belgilandi</b>\n\n" +
@@ -1286,6 +1375,9 @@ bot.on("message:video_note", async (ctx) => {
       return;
     }
     const holat = data?.holat ?? keldiHolat(now);
+    jurnalYoz(x.telegram_id, x.ism, "keldi", "davomat", data?.id, `${soatMatn(now)} — ${holat}`, null, {
+      keldi: now.toISOString(), holat, masofa_m: data?.masofa_m,
+    });
     await ctx.reply(
       `✅ Keldi qayd etildi: <b>${soatMatn(now)}</b> — ${esc(holat)}`,
       { parse_mode: "HTML", reply_markup: await anaMenu(x) },
@@ -1319,6 +1411,9 @@ bot.on("message:video_note", async (ctx) => {
       return;
     }
     const soat = ((data?.sof_min ?? 0) / 60).toFixed(1);
+    jurnalYoz(x.telegram_id, x.ism, "ketdi", "davomat", data?.id, `${soatMatn(now)} — ${soat} soat`, null, {
+      ketdi: now.toISOString(), sof_min: data?.sof_min,
+    });
     await ctx.reply(
       `✅ Ketdi qayd etildi: <b>${soatMatn(now)}</b>. Bugungi ish: <b>${soat} soat</b>.`,
       { parse_mode: "HTML", reply_markup: await anaMenu(x) },
@@ -1432,6 +1527,8 @@ bot.on("message", async (ctx) => {
     }
     ctx.session.kartaStep = undefined;
     ctx.session.kartaId = undefined;
+    const kim = await xodimByTgId(ctx.from!.id);
+    jurnalYoz(kim?.telegram_id, kim?.ism, "karta_tahrir", "xodimlar", id, `${step}: ${t}`, null, { [step]: t === "-" ? null : t });
     const k = await xodimKarta(id);
     if (k) await ctx.reply(k.text, { parse_mode: "HTML", reply_markup: k.kb });
     return;
@@ -1623,6 +1720,12 @@ bot.on("message", async (ctx) => {
       ctx.session.tuzatKeldi = undefined;
       if (error) { await ctx.reply("❌ Saqlashda xato: " + error.message); return; }
       const soat = ((data?.sof_min ?? 0) / 60).toFixed(1);
+      const kim = await xodimByTgId(ctx.from!.id);
+      jurnalYoz(
+        kim?.telegram_id, kim?.ism, "davomat_tuzatildi", "davomat", `${tgid}_${sana}`,
+        `${ism} — ${sana} — ${soatMatn(new Date(keldiIso))}–${ketdiIso ? soatMatn(new Date(ketdiIso)) : "—"}`,
+        null, { keldi: keldiIso, ketdi: ketdiIso, holat },
+      );
       await ctx.reply(
         "✅ <b>Davomat tuzatildi</b>\n\n" +
           `👤 <b>${esc(ism)}</b>\n` +
