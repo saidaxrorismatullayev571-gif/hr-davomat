@@ -78,11 +78,87 @@ begin
   );
 end $$;
 
+-- 3) Anomaliya signal: xodim ketma-ket N ish kuni (dam_kunlar hisobga olinadi,
+--    Kasal/Sababli uzrli hisoblanadi) davomat qilmasa — signal_qabul (yoki
+--    super admin) ga bir martalik ogohlantirish. Jurnal orqali kunига bitta marta.
+create or replace function anomaliya_tekshir() returns void language plpgsql as $$
+declare
+  d_bugun date := (now() at time zone 'Asia/Tashkent')::date;
+  n_chegara int;
+  qabul_tg text;
+  qabul_id bigint;
+  r record;
+  chk_sana date;
+  streak int;
+  safety int;
+  dow int;
+  matn text;
+begin
+  select coalesce(qiymat,'3')::int into n_chegara from public.config where kalit = 'anomaliya_kun';
+  if n_chegara is null or n_chegara < 1 then n_chegara := 3; end if;
+
+  select qiymat into qabul_tg from public.config where kalit = 'signal_qabul';
+  if qabul_tg is null or qabul_tg = '' then
+    qabul_id := 1318046590; -- super admin (birlamchi)
+  else
+    qabul_id := qabul_tg::bigint;
+  end if;
+
+  for r in
+    select x.telegram_id, x.ism, coalesce(x.dam_kunlar, '{}') as dam_kunlar
+    from public.xodimlar x
+    where x.arxiv = false and x.hisobga_olinmaydi = false
+  loop
+    streak := 0;
+    chk_sana := d_bugun - 1;
+    safety := 0;
+    loop
+      safety := safety + 1;
+      exit when safety > 30;
+      dow := extract(dow from chk_sana)::int; -- 0=Yakshanba..6=Shanba
+      if dow = 0 or dow = 6 or dow = any(r.dam_kunlar) then
+        chk_sana := chk_sana - 1;
+        continue;
+      end if;
+      if exists (
+        select 1 from public.davomat d
+        where d.telegram_id = r.telegram_id and d.sana = chk_sana
+          and (d.keldi is not null or d.holat in ('Kasal', 'Sababli'))
+      ) then
+        exit; -- kelgan yoki uzrli kun topildi, streak shu yerda tugaydi
+      end if;
+      streak := streak + 1;
+      exit when streak >= n_chegara;
+      chk_sana := chk_sana - 1;
+    end loop;
+
+    if streak = n_chegara and not exists (
+      select 1 from public.jurnal j
+      where j.harakat = 'anomaliya_signal' and j.yozuv_id = r.telegram_id::text
+        and j.vaqt::date = d_bugun
+    ) then
+      matn := '⚠️ <b>Anomaliya</b>: ' ||
+        replace(replace(replace(r.ism, '&', '&amp;'), '<', '&lt;'), '>', '&gt;') ||
+        ' ketma-ket <b>' || n_chegara || '</b> ish kuni kelmadi.';
+      perform extensions.http_post(
+        'https://api.telegram.org/bot<BOT_TOKEN>/sendMessage',
+        jsonb_build_object('chat_id', qabul_id, 'parse_mode', 'HTML', 'text', matn)::text,
+        'application/json'
+      );
+      insert into public.jurnal (kim_tg_id, kim_ism, harakat, jadval, yozuv_id, tafsilot)
+      values (null, 'Tizim (avtomatik)', 'anomaliya_signal', 'xodimlar', r.telegram_id::text,
+        r.ism || ' — ' || n_chegara || ' kun ketma-ket kelmadi');
+    end if;
+  end loop;
+end $$;
+
 -- ============================================================
 --  JADVAL (Toshkent = UTC+5). pg_cron UTC bo'yicha ishlaydi.
 -- ============================================================
 -- avtoDavomat: har ish kuni 09:05 (Toshkent) = 04:05 UTC
 select cron.schedule('avto-davomat',   '5 4 * * 1-5',  'select avto_davomat()');
+-- Anomaliya signal: har ish kuni 09:35 (Toshkent) = 04:35 UTC (avtoDavomatdan keyin)
+select cron.schedule('anomaliya-signal', '35 4 * * 1-5', 'select anomaliya_tekshir()');
 -- Kunlik hisobot: har ish kuni 18:30 (Toshkent) = 13:30 UTC
 select cron.schedule('kunlik-hisobot', '30 13 * * 1-5', 'select kunlik_hisobot_yubor()');
 

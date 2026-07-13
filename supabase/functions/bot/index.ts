@@ -1087,7 +1087,7 @@ const JURNAL_HARAKAT_EMOJI: Record<string, string> = {
   keldi: "🟢", ketdi: "🔴", tushlikka: "🍽", tushlikdan_qaytdi: "↩️",
   xodim_qoshdi: "➕", rol_ozgardi: "🔄", arxivladi: "🗄", tiklandi: "♻️",
   dam_kun_ozgardi: "🛏", karta_tahrir: "✏️", sozlama_ozgardi: "⚙️",
-  rol_huquq_ozgardi: "🔐", davomat_tuzatildi: "🛠",
+  rol_huquq_ozgardi: "🔐", davomat_tuzatildi: "🛠", anomaliya_signal: "⚠️",
 };
 async function jurnalMatn(sahifa: number): Promise<{ text: string; bor_keyingi: boolean }> {
   const LIMIT = 15;
